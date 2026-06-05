@@ -1,0 +1,403 @@
+/*
+ * Copyright Debezium Authors.
+ *
+ * Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package io.debezium.connector.milvus;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+
+import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigDef.Importance;
+import org.apache.kafka.common.config.ConfigDef.Type;
+import org.apache.kafka.common.config.ConfigDef.Width;
+
+import io.debezium.config.ConfigDefinition;
+import io.debezium.config.Configuration;
+import io.debezium.config.EnumeratedValue;
+import io.debezium.config.Field;
+import io.debezium.connector.SourceInfoStructMaker;
+import io.debezium.relational.ColumnFilterMode;
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
+import io.debezium.relational.TableId;
+import io.debezium.relational.Tables.TableFilter;
+import io.debezium.spi.topic.TopicNamingStrategy;
+import io.debezium.util.Strings;
+
+/**
+ * Configuration definition for the Milvus Debezium connector.
+ *
+ * <p>Extends {@link RelationalDatabaseConnectorConfig} to follow the same
+ * pattern as PostgreSQL and MySQL connectors, enabling full use of the
+ * relational schema infrastructure.</p>
+ */
+public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
+
+    private static final int DEFAULT_SNAPSHOT_FETCH_SIZE = 0;
+
+    public enum SnapshotMode implements EnumeratedValue {
+        INITIAL("initial"),
+        NEVER("never"),
+        RECOVERY("recovery"),
+        WHEN_NEEDED("when_needed");
+
+        private final String value;
+
+        SnapshotMode(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String getValue() {
+            return value;
+        }
+
+        public static SnapshotMode parse(String value) {
+            return parse(value, INITIAL);
+        }
+
+        public static SnapshotMode parse(String value, SnapshotMode defaultValue) {
+            if (value == null) {
+                return defaultValue;
+            }
+            for (SnapshotMode mode : values()) {
+                if (mode.value.equalsIgnoreCase(value)) {
+                    return mode;
+                }
+            }
+            return defaultValue;
+        }
+    }
+
+    public static final Field MILVUS_URI = Field.create("milvus.uri")
+            .withDisplayName("Milvus URI")
+            .withType(Type.STRING)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.HIGH)
+            .withDescription("Milvus gRPC URI (e.g., http://localhost:19530). Required.")
+            .withValidation(Field::isRequired);
+
+    public static final Field MILVUS_TOKEN = Field.create("milvus.token")
+            .withDisplayName("Milvus Token")
+            .withType(Type.STRING)
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Authentication token for Milvus. Optional.");
+
+    public static final Field MILVUS_DATABASE = Field.create("milvus.database")
+            .withDisplayName("Milvus Database")
+            .withType(Type.STRING)
+            .withDefault("default")
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Milvus database name. Defaults to 'default'.");
+
+    public static final Field COLLECTION_INCLUDE_LIST = Field.create("milvus.collection.include.list")
+            .withDisplayName("Include list")
+            .withType(Type.LIST)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.HIGH)
+            .withDescription("Comma-separated list of collection names to capture.");
+
+    public static final Field COLLECTION_EXCLUDE_LIST = Field.create("milvus.collection.exclude.list")
+            .withDisplayName("Exclude list")
+            .withType(Type.LIST)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Comma-separated list of collection names to exclude.");
+
+    public static final Field METADATA_TIMEOUT_MS = Field.create("milvus.metadata.timeout.ms")
+            .withDisplayName("Metadata timeout (ms)")
+            .withType(Type.LONG)
+            .withDefault(5000L)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Timeout in milliseconds for Milvus metadata API calls.");
+
+    public static final Field STARTUP_VALIDATION_ENABLED = Field.create("milvus.startup.validation.enabled")
+            .withDisplayName("Startup validation enabled")
+            .withType(Type.BOOLEAN)
+            .withDefault(true)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Whether to perform startup validation. Defaults to true.");
+
+    public static final Field ETCD_ENDPOINTS = Field.create("milvus.etcd.endpoints")
+            .withDisplayName("etcd endpoints")
+            .withType(Type.STRING)
+            .withDefault("http://localhost:2379")
+            .withWidth(Width.LONG)
+            .withImportance(Importance.HIGH)
+            .withDescription("Comma-separated list of etcd endpoints. Defaults to http://localhost:2379.");
+
+    public static final Field ETCD_ROOT_PATH = Field.create("milvus.etcd.root.path")
+            .withDisplayName("etcd root path")
+            .withType(Type.STRING)
+            .withDefault("by-dev")
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Root path prefix in etcd. Defaults to 'by-dev'.");
+
+    public static final Field SNAPSHOT_MODE_FIELD = Field.create("snapshot.mode")
+            .withDisplayName("Snapshot mode")
+            .withType(Type.STRING)
+            .withDefault("initial")
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.HIGH)
+            .withDescription("Snapshot mode: 'initial', 'never', 'recovery', or 'when_needed'. "
+                    + "Defaults to 'initial'.");
+
+    public static final Field KAFKA_BOOTSTRAP_SERVERS = Field.create("milvus.kafka.bootstrap.servers")
+            .withDisplayName("Kafka bootstrap servers")
+            .withType(Type.STRING)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.HIGH)
+            .withDescription("Kafka bootstrap servers used by Milvus as its MQ backend.");
+
+    public static final Field KAFKA_CONSUMER_GROUP_ID = Field.create("milvus.kafka.consumer.group.id")
+            .withDisplayName("Kafka consumer group id")
+            .withType(Type.STRING)
+            .withDefault("debezium-milvus")
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Kafka consumer group id used by the connector for manual channel assignment.");
+
+    public static final Field WIRE_FORMAT = Field.create("milvus.wire.format")
+            .withDisplayName("Wire format")
+            .withType(Type.STRING)
+            .withDefault("auto")
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Wire format: 'auto', 'msgpack_batch', or 'proto_single'.");
+
+    public static final Field TIMETICK_STALL_TIMEOUT_MS = Field.create("milvus.timetick.stall.timeout.ms")
+            .withDisplayName("Timetick stall timeout (ms)")
+            .withType(Type.LONG)
+            .withDefault(30000L)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Timeout before forcing a flush on timetick stall. Default 30000.");
+
+    public static final Field UPSERT_MODE = Field.create("milvus.upsert.mode")
+            .withDisplayName("Upsert mode")
+            .withType(Type.STRING)
+            .withDefault("passthrough")
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Upsert representation: 'passthrough' or 'correlate'.");
+
+    public static final Field SNAPSHOT_BATCH_SIZE = Field.create("milvus.snapshot.batch.size")
+            .withDisplayName("Snapshot batch size")
+            .withType(Type.INT)
+            .withDefault(1000)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Batch size for snapshot queries. Default 1000.");
+
+    public static final Field MAX_BATCH_SIZE = Field.create("max.batch.size")
+            .withDisplayName("Max batch size")
+            .withType(Type.INT)
+            .withDefault(2048)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Maximum number of records to return in a single poll.");
+
+    public static final Field POLL_INTERVAL_MS = Field.create("poll.interval.ms")
+            .withDisplayName("Poll interval (ms)")
+            .withType(Type.LONG)
+            .withDefault(1000L)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Interval between poll attempts when no data is available.");
+
+    private final String milvusUri;
+    private final String milvusToken;
+    private final String milvusDatabase;
+    private final List<String> collectionIncludeList;
+    private final List<String> collectionExcludeList;
+    private final long metadataTimeoutMs;
+    private final boolean startupValidationEnabled;
+    private final List<String> etcdEndpoints;
+    private final String etcdRootPath;
+    private final SnapshotMode snapshotMode;
+    private final String kafkaBootstrapServers;
+    private final String kafkaConsumerGroupId;
+    private final String wireFormat;
+    private final long timetickStallTimeoutMs;
+    private final String upsertMode;
+    private final int snapshotBatchSize;
+    private final int maxBatchSize;
+    private final long pollIntervalMs;
+
+    public MilvusConnectorConfig(Configuration config) {
+        super(
+                config,
+                new AllTablesFilter(),
+                x -> x.table(),
+                DEFAULT_SNAPSHOT_FETCH_SIZE,
+                ColumnFilterMode.SCHEMA,
+                false);
+        this.milvusUri = config.getString(MILVUS_URI);
+        this.milvusToken = config.getString(MILVUS_TOKEN);
+        this.milvusDatabase = config.getString(MILVUS_DATABASE);
+        this.collectionIncludeList = Strings.listOfTrimmed(config.getString(COLLECTION_INCLUDE_LIST),
+                Function.identity());
+        this.collectionExcludeList = Strings.listOfTrimmed(config.getString(COLLECTION_EXCLUDE_LIST),
+                Function.identity());
+        this.metadataTimeoutMs = config.getLong(METADATA_TIMEOUT_MS);
+        this.startupValidationEnabled = config.getBoolean(STARTUP_VALIDATION_ENABLED);
+        this.etcdEndpoints = Strings.listOfTrimmed(config.getString(ETCD_ENDPOINTS),
+                Function.identity());
+        this.etcdRootPath = config.getString(ETCD_ROOT_PATH);
+        this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE_FIELD), SnapshotMode.INITIAL);
+        this.kafkaBootstrapServers = config.getString(KAFKA_BOOTSTRAP_SERVERS);
+        this.kafkaConsumerGroupId = config.getString(KAFKA_CONSUMER_GROUP_ID);
+        this.wireFormat = config.getString(WIRE_FORMAT);
+        this.timetickStallTimeoutMs = config.getLong(TIMETICK_STALL_TIMEOUT_MS);
+        this.upsertMode = config.getString(UPSERT_MODE);
+        this.snapshotBatchSize = config.getInteger(SNAPSHOT_BATCH_SIZE);
+        this.maxBatchSize = config.getInteger(MAX_BATCH_SIZE);
+        this.pollIntervalMs = config.getLong(POLL_INTERVAL_MS);
+    }
+
+    public String getMilvusUri() {
+        return milvusUri;
+    }
+
+    public String getMilvusToken() {
+        return milvusToken;
+    }
+
+    public String getMilvusDatabase() {
+        return milvusDatabase;
+    }
+
+    public List<String> getCollectionIncludeList() {
+        return collectionIncludeList;
+    }
+
+    public List<String> getCollectionExcludeList() {
+        return collectionExcludeList;
+    }
+
+    public long getMetadataTimeoutMs() {
+        return metadataTimeoutMs;
+    }
+
+    public boolean isStartupValidationEnabled() {
+        return startupValidationEnabled;
+    }
+
+    public List<String> getEtcdEndpoints() {
+        return etcdEndpoints;
+    }
+
+    public String getEtcdRootPath() {
+        return etcdRootPath;
+    }
+
+    public String getKafkaBootstrapServers() {
+        return kafkaBootstrapServers;
+    }
+
+    public String getKafkaConsumerGroupId() {
+        return kafkaConsumerGroupId;
+    }
+
+    public String getWireFormat() {
+        return wireFormat;
+    }
+
+    public long getTimetickStallTimeoutMs() {
+        return timetickStallTimeoutMs;
+    }
+
+    public String getUpsertMode() {
+        return upsertMode;
+    }
+
+    public int getSnapshotBatchSize() {
+        return snapshotBatchSize;
+    }
+
+    public int getMaxBatchSize() {
+        return maxBatchSize;
+    }
+
+    public long getPollIntervalMs() {
+        return pollIntervalMs;
+    }
+
+    public String getLogicalName() {
+        String prefix = getConfig().getString(TOPIC_PREFIX);
+        return prefix != null ? prefix : "milvus";
+    }
+
+    @Override
+    public SnapshotMode getSnapshotMode() {
+        return snapshotMode;
+    }
+
+    @Override
+    public Optional<EnumeratedValue> getSnapshotLockingMode() {
+        return Optional.empty();
+    }
+
+    @Override
+    public String getContextName() {
+        return Module.name();
+    }
+
+    @Override
+    public String getConnectorName() {
+        return Module.name();
+    }
+
+    @Override
+    protected SourceInfoStructMaker<?> getSourceInfoStructMaker(Version version) {
+        return new MilvusSourceInfoStructMaker();
+    }
+
+    @Override
+    public TopicNamingStrategy getTopicNamingStrategy(Field field) {
+        return super.getTopicNamingStrategy(field);
+    }
+
+    private static final ConfigDefinition CONFIG_DEFINITION = RelationalDatabaseConnectorConfig.CONFIG_DEFINITION.edit()
+            .name("Milvus")
+            .type(
+                    MILVUS_URI,
+                    MILVUS_TOKEN,
+                    MILVUS_DATABASE,
+                    COLLECTION_INCLUDE_LIST,
+                    COLLECTION_EXCLUDE_LIST,
+                    METADATA_TIMEOUT_MS,
+                    STARTUP_VALIDATION_ENABLED,
+                    ETCD_ENDPOINTS,
+                    ETCD_ROOT_PATH,
+                    SNAPSHOT_MODE_FIELD,
+                    KAFKA_BOOTSTRAP_SERVERS,
+                    KAFKA_CONSUMER_GROUP_ID,
+                    WIRE_FORMAT,
+                    TIMETICK_STALL_TIMEOUT_MS,
+                    UPSERT_MODE,
+                    SNAPSHOT_BATCH_SIZE)
+            .create();
+
+    public static ConfigDef configDef() {
+        return CONFIG_DEFINITION.configDef();
+    }
+
+    /**
+     * Simple table filter that accepts all tables (Milvus has no system schemas
+     * to exclude at the relational level).
+     */
+    private static class AllTablesFilter implements TableFilter {
+        @Override
+        public boolean isIncluded(TableId t) {
+            return true;
+        }
+    }
+}
