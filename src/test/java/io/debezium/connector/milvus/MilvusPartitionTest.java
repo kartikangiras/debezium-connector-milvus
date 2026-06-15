@@ -13,10 +13,12 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.doc.FixFor;
 
-class MilvusPartitionTest {
+public class MilvusPartitionTest {
 
     @Test
+    @FixFor("debezium/dbz#2068")
     void shouldCreatePartitionWithCorrectIdentity() {
         MilvusPartition partition = MilvusPartition.create("test-server", "by-dev-rootcoord-dml_0");
 
@@ -28,6 +30,7 @@ class MilvusPartitionTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2068")
     void shouldImplementEqualityBasedOnLogicalNameAndPchannel() {
         MilvusPartition p1 = MilvusPartition.create("server", "channel-a");
         MilvusPartition p2 = MilvusPartition.create("server", "channel-a");
@@ -41,6 +44,7 @@ class MilvusPartitionTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2068")
     void shouldProvideDeterministicOrdering() {
         MilvusPartition.Provider provider = new MilvusPartition.Provider(
                 createTestConfig(),
@@ -54,6 +58,7 @@ class MilvusPartitionTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2068")
     void shouldDeduplicatePchannels() {
         MilvusPartition.Provider provider = new MilvusPartition.Provider(
                 createTestConfig(),

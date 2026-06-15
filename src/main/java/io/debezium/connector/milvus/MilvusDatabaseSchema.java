@@ -5,21 +5,30 @@
  */
 package io.debezium.connector.milvus;
 
+import java.util.Collections;
+import java.util.List;
+
+import io.debezium.config.CommonConnectorConfig;
 import io.debezium.connector.common.CdcSourceTaskContext;
+import io.debezium.relational.CustomConverterRegistry;
 import io.debezium.relational.Key;
 import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.RelationalDatabaseSchema;
 import io.debezium.relational.TableId;
 import io.debezium.relational.TableSchemaBuilder;
 import io.debezium.relational.Tables;
+import io.debezium.schema.FieldNameSelector;
+import io.debezium.schema.SchemaFactory;
 import io.debezium.schema.SchemaNameAdjuster;
 import io.debezium.spi.topic.TopicNamingStrategy;
 
 /**
  * Database schema for Milvus collections.
  *
- * <p>Extends {@link RelationalDatabaseSchema} for future use when
- * deserialization and table registration are added.</p>
+ * <p>
+ * Extends {@link RelationalDatabaseSchema} for future use when
+ * deserialization and table registration are added.
+ * </p>
  */
 public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
 
@@ -37,7 +46,8 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
 
     public static MilvusDatabaseSchema create(MilvusConnectorConfig connectorConfig,
                                               CdcSourceTaskContext<?> taskContext) {
-        TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig.getTopicNamingStrategy(io.debezium.config.CommonConnectorConfig.TOPIC_NAMING_STRATEGY);
+        TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig
+                .getTopicNamingStrategy(CommonConnectorConfig.TOPIC_NAMING_STRATEGY);
         Tables.TableFilter tableFilter = Tables.TableFilter.includeAll();
         Tables.ColumnNameFilter columnFilter = (catalog, schema, table, column) -> true;
         SchemaNameAdjuster schemaNameAdjuster = connectorConfig.schemaNameAdjuster();
@@ -45,10 +55,10 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
         TableSchemaBuilder tableSchemaBuilder = new TableSchemaBuilder(
                 null,
                 schemaNameAdjuster,
-                new io.debezium.relational.CustomConverterRegistry(java.util.Collections.emptyList()),
-                connectorConfig.getSourceInfoStructMaker(io.debezium.config.CommonConnectorConfig.Version.V1).schema(),
-                io.debezium.schema.SchemaFactory.get().transactionBlockSchema(),
-                io.debezium.schema.FieldNameSelector.defaultSelector(schemaNameAdjuster),
+                new CustomConverterRegistry(Collections.emptyList()),
+                connectorConfig.getSourceInfoStructMaker(CommonConnectorConfig.Version.V1).schema(),
+                SchemaFactory.get().transactionBlockSchema(),
+                FieldNameSelector.defaultSelector(schemaNameAdjuster),
                 false,
                 connectorConfig.getEventConvertingFailureHandlingMode());
 
@@ -63,7 +73,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                 taskContext);
     }
 
-    public void registerCollection(String dbName, String collectionName, java.util.List<String> fieldNames) {
+    public void registerCollection(String dbName, String collectionName, List<String> fieldNames) {
         // TODO: implement dynamic table registration when deserialization is added
     }
 }

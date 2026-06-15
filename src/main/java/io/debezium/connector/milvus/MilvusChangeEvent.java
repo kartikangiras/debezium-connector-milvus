@@ -57,7 +57,7 @@ public sealed class MilvusChangeEvent {
         private final Map<String, Object> data;
 
         public Insert(String collectionName, String pchannel, String vchannel, long tso,
-                Map<String, Object> data) {
+                      Map<String, Object> data) {
             super(collectionName, pchannel, vchannel, tso);
             this.data = data;
         }
@@ -74,7 +74,7 @@ public sealed class MilvusChangeEvent {
         private final Object primaryKeys;
 
         public Delete(String collectionName, String pchannel, String vchannel, long tso,
-                Object primaryKeys) {
+                      Object primaryKeys) {
             super(collectionName, pchannel, vchannel, tso);
             this.primaryKeys = primaryKeys;
         }
@@ -101,7 +101,7 @@ public sealed class MilvusChangeEvent {
         private final String ddlStatement;
 
         public DDL(String collectionName, String pchannel, String vchannel, long tso,
-                String ddlType, String ddlStatement) {
+                   String ddlType, String ddlStatement) {
             super(collectionName, pchannel, vchannel, tso);
             this.ddlType = ddlType;
             this.ddlStatement = ddlStatement;

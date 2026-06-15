@@ -21,15 +21,14 @@ import io.debezium.spi.schema.DataCollectionId;
 /**
  * Offset context for the Milvus connector.
  *
- * <p>Tracks the Kafka MQ position (topic, partition, offset) and per-vchannel
- * timetick watermarks alongside the standard snapshot state.</p>
+ * <p>Tracks the Kafka MQ position per pchannel and per-vchannel timetick
+ * watermarks as flat primitive key-value pairs (no JSON serialization),
+ * following the same pattern as PostgresOffsetContext.</p>
  */
 public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
 
-    private static final String MQ_TOPIC_KEY = "mq_topic";
-    private static final String MQ_PARTITION_KEY = "mq_partition";
-    private static final String MQ_OFFSET_KEY = "mq_offset";
-    private static final String VCHANNEL_TIMETICKS_KEY = "vchannel_timeticks";
+    private static final String MQ_OFFSET_PREFIX = "mq_offset_";
+    private static final String VCHANNEL_TIMETICK_PREFIX = "vchannel_timetick_";
 
     private final Map<String, Object> offset;
     private TransactionContext transactionContext;
@@ -57,14 +56,56 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
         this.transactionContext = TransactionContext.load(storedOffset);
     }
 
+    /**
+     * Store the MQ offset for a pchannel, keyed by topic name.
+     *
+     * <p>Offsets are stored as flat primitive values so the Connect offset
+     * storage never has to parse JSON. Each pchannel gets its own key
+     * {@code mq_offset_<topic>}.</p>
+     */
     public void setMqPosition(String topic, int partition, long offset) {
-        this.offset.put(MQ_TOPIC_KEY, topic);
-        this.offset.put(MQ_PARTITION_KEY, String.valueOf(partition));
-        this.offset.put(MQ_OFFSET_KEY, String.valueOf(offset));
+        this.offset.put(MQ_OFFSET_PREFIX + topic, offset);
     }
 
+    /**
+     * Retrieve the stored MQ offset for a given pchannel, or {@code null} if
+     * none is present.
+     */
+    public Long getMqOffset(String pchannel) {
+        Object value = this.offset.get(MQ_OFFSET_PREFIX + pchannel);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return Long.parseLong(value.toString());
+    }
+
+    /**
+     * Store per-vchannel timetick watermarks as flat primitive values.
+     *
+     * <p>Each vchannel gets its own key {@code vchannel_timetick_<vchannel>}.</p>
+     */
     public void setVchannelTimeticks(Map<String, Long> timeticks) {
-        this.offset.put(VCHANNEL_TIMETICKS_KEY, serializeTimeticks(timeticks));
+        for (Map.Entry<String, Long> entry : timeticks.entrySet()) {
+            this.offset.put(VCHANNEL_TIMETICK_PREFIX + entry.getKey(), entry.getValue());
+        }
+    }
+
+    /**
+     * Retrieve the stored timetick for a given vchannel, or {@code null} if
+     * none is present.
+     */
+    public Long getVchannelTimetick(String vchannel) {
+        Object value = this.offset.get(VCHANNEL_TIMETICK_PREFIX + vchannel);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return Long.parseLong(value.toString());
     }
 
     public boolean isSnapshotCompleted() {
@@ -95,21 +136,6 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
     @Override
     public TransactionContext getTransactionContext() {
         return transactionContext;
-    }
-
-    private static String serializeTimeticks(Map<String, Long> timeticks) {
-        StringBuilder sb = new StringBuilder("{");
-        boolean first = true;
-        for (Map.Entry<String, Long> entry : timeticks.entrySet()) {
-            if (!first) {
-                sb.append(",");
-            }
-            sb.append("\"").append(entry.getKey()).append("\":")
-                    .append(entry.getValue());
-            first = false;
-        }
-        sb.append("}");
-        return sb.toString();
     }
 
     public static class Loader implements OffsetContext.Loader<MilvusOffsetContext> {

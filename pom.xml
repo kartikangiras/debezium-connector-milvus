@@ -40,21 +40,6 @@
     <properties>
         <!-- Debezium parent -->
         <version.debezium>${project.version}</version.debezium>
-
-        <!--
-          Specify the properties that will be used for setting up the integration tests' Docker container.
-          Note that the `dockerhost.ip` property is computed from the IP address of DOCKER_HOST, which will
-          work on all platforms. We'll set some of these as system properties during integration testing.
-        -->
-        <milvus.grpc.port>19530</milvus.grpc.port>
-        <milvus.database>default</milvus.database>
-        <docker.dbs>milvusdb/milvus:latest</docker.dbs>
-        <docker.filter>${docker.dbs}</docker.filter>
-        <docker.skip>false</docker.skip>
-        <docker.showLogs>true</docker.showLogs>
-
-        <!-- Order in which Maven Failsafe plugin runs integration tests -->
-        <runOrder>alphabetical</runOrder>
     </properties>
 
     <repositories>
@@ -72,104 +57,6 @@
             </snapshots>
         </repository>
     </repositories>
-
-    <!-- Managing versions here to ensure the right ones are applied during releases -->
-    <dependencyManagement>
-        <dependencies>
-            <!-- Debezium artifacts -->
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-util</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-connector-common</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-config</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-embedded</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-storage-kafka</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-storage-file</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-connect-plugins</artifactId>
-                <version>${version.debezium}</version>
-            </dependency>
-
-            <!-- Building -->
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-ide-configs</artifactId>
-                <version>${version.debezium}</version>
-                <scope>provided</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-checkstyle</artifactId>
-                <version>${version.debezium}</version>
-                <scope>provided</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-assembly-descriptors</artifactId>
-                <version>${version.debezium}</version>
-                <scope>provided</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-revapi</artifactId>
-                <version>${version.debezium}</version>
-                <scope>provided</scope>
-            </dependency>
-
-            <!-- Testing -->
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-connector-common</artifactId>
-                <version>${version.debezium}</version>
-                <type>test-jar</type>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-util</artifactId>
-                <version>${version.debezium}</version>
-                <type>test-jar</type>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-connect-plugins</artifactId>
-                <version>${version.debezium}</version>
-                <type>test-jar</type>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.debezium</groupId>
-                <artifactId>debezium-embedded</artifactId>
-                <version>${version.debezium}</version>
-                <type>test-jar</type>
-                <scope>test</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -204,67 +91,6 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Building -->
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-ide-configs</artifactId>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-checkstyle</artifactId>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-assembly-descriptors</artifactId>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-revapi</artifactId>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-util</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.google.protobuf</groupId>
-            <artifactId>protobuf-java</artifactId>
-            <version>3.25.3</version>
-        </dependency>
-
-        <!-- Testing -->
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-embedded</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-connector-common</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-util</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-embedded</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.debezium</groupId>
-            <artifactId>debezium-connect-plugins</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
@@ -288,73 +114,26 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.11.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
-            <version>5.11.0</version>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-util</artifactId>
+            <type>test-jar</type>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <plugin>
-                <groupId>io.fabric8</groupId>
-                <artifactId>docker-maven-plugin</artifactId>
-                <configuration>
-                    <watchInterval>500</watchInterval>
-                    <logDate>default</logDate>
-                    <verbose>true</verbose>
-                    <images>
-                        <image>
-                            <!-- A Docker image using the Milvus -->
-                            <name>${docker.dbs}</name>
-                            <run>
-                                <namingStrategy>none</namingStrategy>
-                                <ports>
-                                    <port>${milvus.grpc.port}:19530</port>
-                                </ports>
-                                <log>
-                                    <prefix>MILVUS &gt;&gt;&gt;</prefix>
-                                    <enabled>true</enabled>
-                                    <color>yellow</color>
-                                </log>
-                                <wait>
-                                    <time>120000</time>
-                                    <log>Server listening on</log>
-                                </wait>
-                            </run>
-                        </image>
-                    </images>
-                </configuration>
-                <!--
-                Connect this plugin to the maven lifecycle around the integration-test phase:
-                start the container in pre-integration-test and stop it in post-integration-test.
-                -->
-                <executions>
-                    <execution>
-                        <id>start</id>
-                        <phase>pre-integration-test</phase>
-                        <goals>
-                            <goal>start</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>stop</id>
-                        <phase>post-integration-test</phase>
-                        <goals>
-                            <goal>stop</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
             <!--
-            Unlike surefire, the failsafe plugin ensures 'post-integration-test' phase always runs, even
-            when there are failed integration tests. We rely upon this to always shut down the Docker container
-            after the integration tests (defined as '*IT.java') are run.
+            the failsafe plugin ensures 'post-integration-test' phase always runs, even
+            when there are failed integration tests.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -377,10 +156,6 @@
                     <skipTests>${skipITs}</skipTests>
                     <enableAssertions>true</enableAssertions>
                     <systemPropertyVariables combine.children="append">
-                        <!-- Make these available to the tests via system properties -->
-                        <database.hostname>${docker.host.address}</database.hostname>
-                        <database.dbname>${milvus.database}</database.dbname>
-                        <database.port>${milvus.grpc.port}</database.port>
                         <skipLongRunningTests>${skipLongRunningTests}</skipLongRunningTests>
                     </systemPropertyVariables>
                 </configuration>
@@ -421,78 +196,5 @@
                 </includes>
             </testResource>
         </testResources>
-    </build>
-
-    <!--
-    Define several useful profiles
-    -->
-    <profiles>
-        <profile>
-            <id>assembly</id>
-            <activation>
-                <activeByDefault>false</activeByDefault>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-assembly-plugin</artifactId>
-                        <dependencies>
-                            <dependency>
-                                <groupId>io.debezium</groupId>
-                                <artifactId>debezium-assembly-descriptors</artifactId>
-                                <version>${project.version}</version>
-                            </dependency>
-                        </dependencies>
-                        <executions>
-                            <execution>
-                                <id>default</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>single</goal>
-                                </goals>
-                                <configuration>
-                                    <finalName>${project.artifactId}-${project.version}</finalName>
-                                    <attach>true</attach>  <!-- we want attach & deploy these to Maven -->
-                                    <descriptorRefs>
-                                        <descriptorRef>${assembly.descriptor}</descriptorRef>
-                                    </descriptorRefs>
-                                    <tarLongFileMode>posix</tarLongFileMode>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <!--  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-              Do not perform any Docker-related functionality
-              To use, specify "-DskipITs" on the Maven command line.
-              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ -->
-        <profile>
-            <id>skip-integration-tests</id>
-            <activation>
-                <activeByDefault>false</activeByDefault>
-                <property>
-                    <name>skipITs</name>
-                </property>
-            </activation>
-            <properties>
-                <docker.skip>true</docker.skip>
-            </properties>
-        </profile>
-        <profile>
-            <id>quick</id>
-            <activation>
-                <activeByDefault>false</activeByDefault>
-                <property>
-                    <name>quick</name>
-                </property>
-            </activation>
-            <properties>
-                <skipITs>true</skipITs>
-                <docker.skip>true</docker.skip>
-            </properties>
-        </profile>
-    </profiles>
+    </build>    
 </project>

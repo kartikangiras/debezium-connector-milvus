@@ -8,13 +8,15 @@ package io.debezium.connector.milvus;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.doc.FixFor;
 
-class MilvusConnectorConfigTest {
+public class MilvusConnectorConfigTest {
 
     private static final String TEST_URI = "http://localhost:19530";
     private static final String TEST_TOPIC_PREFIX = "milvus-test";
@@ -26,6 +28,7 @@ class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldLoadRequiredConfig() {
         Configuration config = Configuration.from(baseConfig());
         MilvusConnectorConfig connectorConfig = new MilvusConnectorConfig(config);
@@ -35,6 +38,7 @@ class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldApplyDefaults() {
         Configuration config = Configuration.from(baseConfig());
         MilvusConnectorConfig connectorConfig = new MilvusConnectorConfig(config);
@@ -50,8 +54,9 @@ class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldParseOverrideConfig() {
-        Map<String, String> props = new java.util.HashMap<>(baseConfig());
+        Map<String, String> props = new HashMap<>(baseConfig());
         props.put("milvus.database", "testdb");
         props.put("milvus.collection.include.list", "articles,products");
         props.put("milvus.metadata.timeout.ms", "10000");
@@ -79,6 +84,7 @@ class MilvusConnectorConfigTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldExposeConfigDef() {
         assertThatNoException().isThrownBy(() -> {
             org.apache.kafka.common.config.ConfigDef configDef = MilvusConnectorConfig.configDef();
