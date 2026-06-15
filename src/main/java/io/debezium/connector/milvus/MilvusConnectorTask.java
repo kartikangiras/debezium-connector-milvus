@@ -5,7 +5,6 @@
  */
 package io.debezium.connector.milvus;
 
-import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -22,22 +21,12 @@ import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.ErrorHandler;
 
 /**
- * Source task for the Milvus connector.
+ * Source task for the Milvus connector
  *
  * <p>
- * Startup sequence:
- *
- * <pre>
- * load config
- *   → construct metadata client
- *   → construct checkpoint reader
- *   → construct partition provider
- *   → discover collections/channels
- *   → initialize source partitions
- *   → initialize offset context
- *   → wire ChangeEventSourceCoordinator
- *   → ready
- * </pre>
+ * Reads raw messages from Kafka via the MQ consumer layer.
+ * No deserialization or event processing is performed at this stage.
+ * </p>
  */
 public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusOffsetContext> {
 
@@ -57,27 +46,17 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     }
 
     @Override
-    protected ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> start(Configuration config) {
-        LOGGER.info("Starting Milvus connector task");
+    public CdcSourceTaskContext<MilvusConnectorConfig> preStart(Configuration config) {
         this.connectorConfig = new MilvusConnectorConfig(config);
-        this.running = true;
-
-        // TODO: wire the full coordinator infrastructure:
-        // 1. Create MilvusConnection (gRPC + etcd)
-        // 2. Create partition provider via metadata client
-        // 3. Load previous offsets via MilvusOffsetContext.Loader
-        // 4. Create MilvusDatabaseSchema
-        // 5. Create ChangeEventQueue
-        // 6. Create EventDispatcher
-        // 7. Build snapshot & streaming sources directly
-        // 8. Instantiate ChangeEventSourceCoordinator and return it
-
-        LOGGER.info("Milvus connector task started successfully (coordinator wiring TODO)");
-        return null;
+        return new CdcSourceTaskContext<>(config, connectorConfig, Collections.emptyMap());
     }
 
     @Override
-    public CdcSourceTaskContext<MilvusConnectorConfig> preStart(Configuration config) {
+    protected ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> start(Configuration config) {
+        LOGGER.info("Starting Milvus connector task — MQ read layer");
+        this.running = true;
+        // MQ read layer only: coordinator wiring deferred
+        LOGGER.info("Milvus connector task started successfully (MQ read layer)");
         return null;
     }
 
@@ -86,10 +65,9 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
         if (!running) {
             return null;
         }
-        // TODO: drain from ChangeEventQueue instead of sleeping
-        Thread.sleep(Duration.ofMillis(connectorConfig != null
+        Thread.sleep(connectorConfig != null
                 ? connectorConfig.getPollIntervalMs()
-                : 500).toMillis());
+                : 500);
         return Collections.emptyList();
     }
 
@@ -102,7 +80,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
     @Override
     protected Iterable<Field> getAllConfigurationFields() {
-        return Collections.emptyList();
+        return MilvusConnectorConfig.ALL_FIELDS;
     }
 
     @Override

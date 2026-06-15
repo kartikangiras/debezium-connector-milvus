@@ -15,8 +15,9 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.doc.FixFor;
 
-class MilvusConnectorTaskTest {
+public class MilvusConnectorTaskTest {
 
     private Map<String, String> baseConfig() {
         return Map.of(
@@ -25,12 +26,14 @@ class MilvusConnectorTaskTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldExposeVersion() {
         MilvusConnectorTask task = new MilvusConnectorTask();
         assertThat(task.version()).isEqualTo("3.6.0-SNAPSHOT");
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldStartAndStopCleanly() {
         MilvusConnectorTask task = new MilvusConnectorTask();
         Configuration config = Configuration.from(baseConfig());
@@ -41,6 +44,7 @@ class MilvusConnectorTaskTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldReturnEmptyListWhenPolling() throws InterruptedException {
         MilvusConnectorTask task = new MilvusConnectorTask();
         Configuration config = Configuration.from(baseConfig());
@@ -53,6 +57,7 @@ class MilvusConnectorTaskTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldReturnNullWhenPollingAfterStop() throws InterruptedException {
         MilvusConnectorTask task = new MilvusConnectorTask();
         Configuration config = Configuration.from(baseConfig());
@@ -66,8 +71,9 @@ class MilvusConnectorTaskTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2028")
     void shouldExposeConfigurationFields() {
         MilvusConnectorTask task = new MilvusConnectorTask();
-        assertThat(task.getAllConfigurationFields()).isEmpty();
+        assertThat(task.getAllConfigurationFields()).isSameAs(MilvusConnectorConfig.ALL_FIELDS);
     }
 }

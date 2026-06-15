@@ -30,7 +30,7 @@ public class MilvusProtoDeserializer {
      * @param record the raw Kafka consumer record
      * @return the deserialized message, or {@code null} if deserialization is not yet implemented
      */
-    public RawMilvusMessage deserialize(ConsumerRecord<byte[], byte[]> record) {
+    public RawMilvusMessage deserialize(ConsumerRecord<?, ?> record) {
         // TODO: implement protobuf / MsgPack deserialization
         return null;
     }

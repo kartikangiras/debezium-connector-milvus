@@ -29,9 +29,11 @@ import io.debezium.util.Strings;
 /**
  * Configuration definition for the Milvus Debezium connector.
  *
- * <p>Extends {@link RelationalDatabaseConnectorConfig} to follow the same
+ * <p>
+ * Extends {@link RelationalDatabaseConnectorConfig} to follow the same
  * pattern as PostgreSQL and MySQL connectors, enabling full use of the
- * relational schema infrastructure.</p>
+ * relational schema infrastructure.
+ * </p>
  */
 public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
@@ -164,6 +166,40 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withImportance(Importance.MEDIUM)
             .withDescription("Kafka consumer group id used by the connector for manual channel assignment.");
 
+    public static final Field KAFKA_MAX_POLL_INTERVAL_MS = Field.create("milvus.kafka.max.poll.interval.ms")
+            .withDisplayName("Kafka max poll interval (ms)")
+            .withType(Type.INT)
+            .withDefault(300000)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Maximum time between polls before the consumer is considered dead. Default 300000.");
+
+    public static final Field KAFKA_KEY_DESERIALIZER = Field.create("milvus.kafka.key.deserializer")
+            .withDisplayName("Kafka key deserializer")
+            .withType(Type.STRING)
+            .withDefault("org.apache.kafka.common.serialization.ByteArrayDeserializer")
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.LOW)
+            .withDescription("Kafka key deserializer class for consuming Milvus MQ topics. "
+                    + "Defaults to ByteArrayDeserializer.");
+
+    public static final Field KAFKA_VALUE_DESERIALIZER = Field.create("milvus.kafka.value.deserializer")
+            .withDisplayName("Kafka value deserializer")
+            .withType(Type.STRING)
+            .withDefault("org.apache.kafka.common.serialization.ByteArrayDeserializer")
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.LOW)
+            .withDescription("Kafka value deserializer class for consuming Milvus MQ topics. "
+                    + "Defaults to ByteArrayDeserializer.");
+
+    public static final Field KAFKA_PARTITION_INDEX = Field.create("milvus.kafka.partition.index")
+            .withDisplayName("Kafka partition index")
+            .withType(Type.INT)
+            .withDefault(0)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDescription("Partition index for Milvus pchannels on Kafka. Default 0.");
+
     public static final Field WIRE_FORMAT = Field.create("milvus.wire.format")
             .withDisplayName("Wire format")
             .withType(Type.STRING)
@@ -224,6 +260,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final SnapshotMode snapshotMode;
     private final String kafkaBootstrapServers;
     private final String kafkaConsumerGroupId;
+    private final int kafkaMaxPollIntervalMs;
+    private final String kafkaKeyDeserializer;
+    private final String kafkaValueDeserializer;
+    private final int kafkaPartitionIndex;
     private final String wireFormat;
     private final long timetickStallTimeoutMs;
     private final String upsertMode;
@@ -254,6 +294,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE_FIELD), SnapshotMode.INITIAL);
         this.kafkaBootstrapServers = config.getString(KAFKA_BOOTSTRAP_SERVERS);
         this.kafkaConsumerGroupId = config.getString(KAFKA_CONSUMER_GROUP_ID);
+        this.kafkaMaxPollIntervalMs = config.getInteger(KAFKA_MAX_POLL_INTERVAL_MS);
+        this.kafkaKeyDeserializer = config.getString(KAFKA_KEY_DESERIALIZER);
+        this.kafkaValueDeserializer = config.getString(KAFKA_VALUE_DESERIALIZER);
+        this.kafkaPartitionIndex = config.getInteger(KAFKA_PARTITION_INDEX);
         this.wireFormat = config.getString(WIRE_FORMAT);
         this.timetickStallTimeoutMs = config.getLong(TIMETICK_STALL_TIMEOUT_MS);
         this.upsertMode = config.getString(UPSERT_MODE);
@@ -304,6 +348,22 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public String getKafkaConsumerGroupId() {
         return kafkaConsumerGroupId;
+    }
+
+    public int getKafkaMaxPollIntervalMs() {
+        return kafkaMaxPollIntervalMs;
+    }
+
+    public String getKafkaKeyDeserializer() {
+        return kafkaKeyDeserializer;
+    }
+
+    public String getKafkaValueDeserializer() {
+        return kafkaValueDeserializer;
+    }
+
+    public int getKafkaPartitionIndex() {
+        return kafkaPartitionIndex;
     }
 
     public String getWireFormat() {
@@ -380,11 +440,17 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     SNAPSHOT_MODE_FIELD,
                     KAFKA_BOOTSTRAP_SERVERS,
                     KAFKA_CONSUMER_GROUP_ID,
+                    KAFKA_MAX_POLL_INTERVAL_MS,
+                    KAFKA_KEY_DESERIALIZER,
+                    KAFKA_VALUE_DESERIALIZER,
+                    KAFKA_PARTITION_INDEX,
                     WIRE_FORMAT,
                     TIMETICK_STALL_TIMEOUT_MS,
                     UPSERT_MODE,
                     SNAPSHOT_BATCH_SIZE)
             .create();
+
+    public static Field.Set ALL_FIELDS = Field.setOf(CONFIG_DEFINITION.all());
 
     public static ConfigDef configDef() {
         return CONFIG_DEFINITION.configDef();

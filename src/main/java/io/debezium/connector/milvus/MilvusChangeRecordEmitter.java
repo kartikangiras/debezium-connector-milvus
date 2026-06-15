@@ -6,7 +6,6 @@
 package io.debezium.connector.milvus;
 
 import io.debezium.data.Envelope;
-import io.debezium.pipeline.spi.ChangeRecordEmitter;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.relational.RelationalChangeRecordEmitter;
 import io.debezium.relational.RelationalDatabaseConnectorConfig;
@@ -27,8 +26,8 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     private final Envelope.Operation operation;
 
     public MilvusChangeRecordEmitter(MilvusPartition partition, OffsetContext offsetContext,
-            Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
-            MilvusChangeEvent changeEvent, Envelope.Operation operation) {
+                                     Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
+                                     MilvusChangeEvent changeEvent, Envelope.Operation operation) {
         super(partition, offsetContext, clock, connectorConfig);
         this.changeEvent = changeEvent;
         this.operation = operation;
