@@ -40,6 +40,8 @@
     <properties>
         <!-- Debezium parent -->
         <version.debezium>${project.version}</version.debezium>
+        <version.milvus.sdk>2.6.0</version.milvus.sdk>
+        <version.msgpack>0.9.9</version.msgpack>
     </properties>
 
     <repositories>
@@ -78,6 +80,24 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connect-plugins</artifactId>
+        </dependency>
+
+        <!--
+            Milvus Java SDK — ships the protobuf-generated msgpb/schema/common classes
+            (InsertRequest, DeleteRequest, MsgBase, MsgType, FieldData) used to
+            deserialize the Milvus MQ wire format. Also transitively pulls protobuf-java.
+        -->
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>${version.milvus.sdk}</version>
+        </dependency>
+
+        <!-- MsgPack runtime for the msgpack_batch wire format -->
+        <dependency>
+            <groupId>org.msgpack</groupId>
+            <artifactId>msgpack-core</artifactId>
+            <version>${version.msgpack}</version>
         </dependency>
 
         <dependency>
