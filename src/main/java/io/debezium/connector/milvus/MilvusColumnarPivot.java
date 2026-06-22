@@ -10,6 +10,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.debezium.util.Collect;
+
 /**
  * Pivots Milvus columnar insert data into row-oriented {@code Map} records.
  *
@@ -79,7 +81,7 @@ public class MilvusColumnarPivot {
                                            String wireFormat, String topic, int partition, long offset)
             throws MilvusWireFormatMismatchException {
         List<Map<String, Object>> rows = new ArrayList<>();
-        if (fieldDataList == null || fieldDataList.isEmpty() || numRows <= 0) {
+        if (Collect.isNullOrEmpty(fieldDataList) || numRows <= 0) {
             return rows;
         }
 

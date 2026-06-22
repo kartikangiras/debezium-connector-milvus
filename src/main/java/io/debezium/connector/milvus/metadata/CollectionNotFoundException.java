@@ -10,6 +10,8 @@ package io.debezium.connector.milvus.metadata;
  */
 public class CollectionNotFoundException extends RuntimeException {
 
+    private static final long serialVersionUID = 1L;
+
     private final String collectionName;
 
     public CollectionNotFoundException(String collectionName) {

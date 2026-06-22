@@ -63,7 +63,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     @Override
     protected List<SourceRecord> doPoll() throws InterruptedException {
         if (!running) {
-            return null;
+            return Collections.emptyList();
         }
         Thread.sleep(connectorConfig != null
                 ? connectorConfig.getPollIntervalMs()

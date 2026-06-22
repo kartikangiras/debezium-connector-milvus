@@ -14,6 +14,7 @@ import org.apache.kafka.common.config.ConfigDef.Importance;
 import org.apache.kafka.common.config.ConfigDef.Type;
 import org.apache.kafka.common.config.ConfigDef.Width;
 
+import io.debezium.config.CommonConnectorConfig;
 import io.debezium.config.ConfigDefinition;
 import io.debezium.config.Configuration;
 import io.debezium.config.EnumeratedValue;
@@ -232,22 +233,6 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withImportance(Importance.LOW)
             .withDescription("Batch size for snapshot queries. Default 1000.");
 
-    public static final Field MAX_BATCH_SIZE = Field.create("max.batch.size")
-            .withDisplayName("Max batch size")
-            .withType(Type.INT)
-            .withDefault(2048)
-            .withWidth(Width.SHORT)
-            .withImportance(Importance.LOW)
-            .withDescription("Maximum number of records to return in a single poll.");
-
-    public static final Field POLL_INTERVAL_MS = Field.create("poll.interval.ms")
-            .withDisplayName("Poll interval (ms)")
-            .withType(Type.LONG)
-            .withDefault(1000L)
-            .withWidth(Width.SHORT)
-            .withImportance(Importance.LOW)
-            .withDescription("Interval between poll attempts when no data is available.");
-
     private final String milvusUri;
     private final String milvusToken;
     private final String milvusDatabase;
@@ -302,8 +287,8 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.timetickStallTimeoutMs = config.getLong(TIMETICK_STALL_TIMEOUT_MS);
         this.upsertMode = config.getString(UPSERT_MODE);
         this.snapshotBatchSize = config.getInteger(SNAPSHOT_BATCH_SIZE);
-        this.maxBatchSize = config.getInteger(MAX_BATCH_SIZE);
-        this.pollIntervalMs = config.getLong(POLL_INTERVAL_MS);
+        this.maxBatchSize = config.getInteger(CommonConnectorConfig.MAX_BATCH_SIZE);
+        this.pollIntervalMs = config.getLong(CommonConnectorConfig.POLL_INTERVAL_MS);
     }
 
     public String getMilvusUri() {

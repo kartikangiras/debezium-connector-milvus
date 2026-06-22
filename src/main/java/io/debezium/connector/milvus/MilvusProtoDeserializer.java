@@ -17,6 +17,8 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import io.debezium.util.Collect;
+import io.debezium.util.Strings;
 import io.milvus.grpc.ArrayArray;
 import io.milvus.grpc.BoolArray;
 import io.milvus.grpc.BytesArray;
@@ -172,14 +174,14 @@ public class MilvusProtoDeserializer {
         long tso = baseTimestamp(ins.getBase());
         String collection = ins.getCollectionName();
         String pchannel = safeTopic(message);
-        String vchannel = ins.getShardName().isEmpty() ? pchannel : ins.getShardName();
+        String vchannel = Strings.defaultIfEmpty(ins.getShardName(), pchannel);
 
         List<MilvusFieldData> columns = new ArrayList<>();
         for (FieldData fd : ins.getFieldsDataList()) {
             columns.add(toFieldData(fd));
         }
         long numRows = ins.getNumRows();
-        if (numRows == 0 && !columns.isEmpty()) {
+        if (numRows == 0 && !Collect.isNullOrEmpty(columns)) {
             numRows = columns.get(0).getValues().size();
         }
         List<Map<String, Object>> rows = pivot.pivot(
@@ -197,7 +199,7 @@ public class MilvusProtoDeserializer {
             throws MilvusWireFormatMismatchException {
         long tso = baseTimestamp(del.getBase());
         String pchannel = safeTopic(message);
-        String vchannel = del.getShardName().isEmpty() ? pchannel : del.getShardName();
+        String vchannel = Strings.defaultIfEmpty(del.getShardName(), pchannel);
 
         Object primaryKeys;
         if (del.hasPrimaryKeys()) {
@@ -248,7 +250,7 @@ public class MilvusProtoDeserializer {
      */
     private MilvusFieldData toFieldData(FieldData fd) {
         DataType type = fd.getType();
-        String name = fd.getFieldName().isEmpty() ? String.valueOf(fd.getFieldId()) : fd.getFieldName();
+        String name = Strings.defaultIfEmpty(fd.getFieldName(), String.valueOf(fd.getFieldId()));
         List<Object> values = new ArrayList<>();
 
         if (fd.hasVectors()) {
@@ -480,10 +482,7 @@ public class MilvusProtoDeserializer {
                 ? msgTypeVal.asIntegerValue().toInt()
                 : MsgType.TimeTick.getNumber();
         String collection = mapString(map, "collectionName");
-        String vchannel = mapString(map, "vchannel");
-        if (vchannel == null || vchannel.isEmpty()) {
-            vchannel = pchannel;
-        }
+        String vchannel = Strings.defaultIfEmpty(mapString(map, "vchannel"), pchannel);
         long tso = mapLong(map, "ts");
         if (tso == 0L) {
             tso = mapLong(map, "timestamp");
@@ -532,7 +531,7 @@ public class MilvusProtoDeserializer {
                 }
             }
         }
-        if (numRows == 0 && !columns.isEmpty()) {
+        if (numRows == 0 && !Collect.isNullOrEmpty(columns)) {
             numRows = columns.get(0).getValues().size();
         }
         List<Map<String, Object>> rows = pivot.pivot(

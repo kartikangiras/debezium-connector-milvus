@@ -14,6 +14,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.ProtocolMessageEnum;
 
 import io.debezium.relational.ValueConverter;
+import io.debezium.util.Strings;
 import io.milvus.grpc.DataType;
 
 /**
@@ -167,12 +168,12 @@ public class MilvusValueConverter implements ValueConverter {
             return b;
         }
         if (v instanceof String s) {
-            return Boolean.parseBoolean(s);
+            return Strings.asBoolean(s, false);
         }
         if (v instanceof Number n) {
             return n.intValue() != 0;
         }
-        return Boolean.valueOf(v.toString());
+        return Strings.asBoolean(v.toString(), false);
     }
 
     private Short toShort(Object v) {
