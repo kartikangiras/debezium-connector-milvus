@@ -6,6 +6,7 @@
 package io.debezium.connector.milvus;
 
 import java.util.List;
+import java.util.Objects;
 
 import io.debezium.spi.schema.DataCollectionId;
 
@@ -53,5 +54,23 @@ public class MilvusCollectionId implements DataCollectionId {
     @Override
     public String toString() {
         return identifier();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        MilvusCollectionId that = (MilvusCollectionId) o;
+        return Objects.equals(databaseName, that.databaseName)
+                && Objects.equals(collectionName, that.collectionName);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(databaseName, collectionName);
     }
 }

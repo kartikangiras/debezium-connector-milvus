@@ -58,7 +58,7 @@ public class MilvusConnectorTaskTest {
 
     @Test
     @FixFor("debezium/dbz#2028")
-    void shouldReturnNullWhenPollingAfterStop() throws InterruptedException {
+    void shouldReturnEmptyListWhenPollingAfterStop() throws InterruptedException {
         MilvusConnectorTask task = new MilvusConnectorTask();
         Configuration config = Configuration.from(baseConfig());
 
@@ -67,7 +67,7 @@ public class MilvusConnectorTaskTest {
         task.doStop();
         List<SourceRecord> records = task.doPoll();
 
-        assertThat(records).isNull();
+        assertThat(records).isEmpty();
     }
 
     @Test

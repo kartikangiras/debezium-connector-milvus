@@ -5,6 +5,8 @@
  */
 package io.debezium.connector.milvus;
 
+import java.util.Map;
+
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.relational.RelationalChangeRecordEmitter;
@@ -19,27 +21,77 @@ import io.debezium.util.Clock;
  * into the corresponding Debezium envelope operations and delegates to the
  * {@link ChangeRecordEmitter.Receiver}.
  * </p>
+ *
+ * <ul>
+ * <li><b>Insert</b>: {@code op=c}, {@code before=null},
+ * {@code after=full row data}</li>
+ * <li><b>Delete</b>: {@code op=d}, {@code before=PK-only struct},
+ * {@code after=null}</li>
+ * <li><b>Snapshot read</b>: {@code op=r}, {@code before=null},
+ * {@code after=full row data}</li>
+ * </ul>
  */
 public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<MilvusPartition> {
 
     private final MilvusChangeEvent changeEvent;
     private final Envelope.Operation operation;
+    private final String[] columnNames;
 
     public MilvusChangeRecordEmitter(MilvusPartition partition, OffsetContext offsetContext,
-                                     Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
-                                     MilvusChangeEvent changeEvent, Envelope.Operation operation) {
+            Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
+            MilvusChangeEvent changeEvent, Envelope.Operation operation,
+            String[] columnNames) {
         super(partition, offsetContext, clock, connectorConfig);
         this.changeEvent = changeEvent;
         this.operation = operation;
+        this.columnNames = columnNames;
     }
 
+    /**
+     * Returns the "before" column values for the event.
+     *
+     * Delete events carry a "before" state, and even then
+     * it contains only the primary key columns (Milvus {@code DeleteRequest}
+     * does not carry the prior state of the deleted row).
+     *
+     * @return column values for the "before" image, or {@code null} for Insert
+     *         and snapshot-read operations
+     */
     @Override
     protected Object[] getOldColumnValues() {
+        if (operation == Envelope.Operation.DELETE && changeEvent instanceof MilvusChangeEvent.Delete delete) {
+            Object pks = delete.getPrimaryKeys();
+            return new Object[] { pks };
+        }
         return null;
     }
 
+    /**
+     * Returns the "after" column values for the event.
+     *
+     * <p>
+     * For Insert and snapshot-read events, this is the full row data
+     * extracted from the deserialized {@link MilvusChangeEvent.Insert#getData()}
+     * map, ordered by {@code columnNames}. For Delete events, the after-image
+     * is {@code null} (tombstone semantics).
+     * </p>
+     *
+     * @return column values for the "after" image, or {@code null} for Delete
+     *         operations
+     */
     @Override
     protected Object[] getNewColumnValues() {
+        if (changeEvent instanceof MilvusChangeEvent.Insert insert) {
+            Map<String, Object> data = insert.getData();
+            if (data == null || columnNames == null) {
+                return new Object[0];
+            }
+            Object[] values = new Object[columnNames.length];
+            for (int i = 0; i < columnNames.length; i++) {
+                values[i] = data.get(columnNames[i]);
+            }
+            return values;
+        }
         return null;
     }
 

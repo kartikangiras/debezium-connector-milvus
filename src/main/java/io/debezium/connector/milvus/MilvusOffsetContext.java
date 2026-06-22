@@ -17,6 +17,7 @@ import io.debezium.pipeline.CommonOffsetContext;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.pipeline.txmetadata.TransactionContext;
 import io.debezium.spi.schema.DataCollectionId;
+import io.debezium.util.Strings;
 
 /**
  * Offset context for the Milvus connector.
@@ -152,7 +153,7 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
                 return new MilvusOffsetContext(sourceInfo);
             }
             Object completed = offset.get(SNAPSHOT_COMPLETED_KEY);
-            boolean snapshotCompleted = completed != null && Boolean.parseBoolean(completed.toString());
+            boolean snapshotCompleted = completed != null && Strings.asBoolean(completed.toString(), false);
             return new MilvusOffsetContext(sourceInfo, snapshotCompleted, offset);
         }
     }

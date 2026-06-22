@@ -20,6 +20,8 @@ import org.msgpack.value.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.util.Collect;
+import io.debezium.util.Strings;
 import io.milvus.grpc.MsgType;
 
 import milvus.proto.msg.Msg.CreateCollectionRequest;
@@ -85,7 +87,7 @@ public class MilvusWireFormatDetector {
      */
     public String detect(Set<String> pchannels, Map<TopicPartition, Long> storedOffsets) {
         String configured = normalizedConfiguredFormat();
-        if (pchannels == null || pchannels.isEmpty()) {
+        if (Collect.isNullOrEmpty(pchannels)) {
             return fallbackFormat(configured, "No pchannels configured for wire-format probing");
         }
 
@@ -300,7 +302,7 @@ public class MilvusWireFormatDetector {
             CreateCollectionRequest request = CreateCollectionRequest.parseFrom(data);
             return request.hasBase()
                     && request.getBase().getMsgType() == MsgType.CreateCollection
-                    && !request.getCollectionName().isEmpty();
+                    && !Strings.isNullOrEmpty(request.getCollectionName());
         }
         catch (Exception e) {
             return false;
@@ -312,7 +314,7 @@ public class MilvusWireFormatDetector {
             DropCollectionRequest request = DropCollectionRequest.parseFrom(data);
             return request.hasBase()
                     && request.getBase().getMsgType() == MsgType.DropCollection
-                    && !request.getCollectionName().isEmpty();
+                    && !Strings.isNullOrEmpty(request.getCollectionName());
         }
         catch (Exception e) {
             return false;

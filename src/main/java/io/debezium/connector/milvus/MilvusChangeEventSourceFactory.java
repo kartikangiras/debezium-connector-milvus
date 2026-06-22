@@ -11,10 +11,11 @@ import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
 
 /**
- * Factory for creating Milvus change event sources — MQ read layer only.
+ * Factory for creating Milvus change event sources.
  *
- * <p>Provides the streaming source that consumes raw messages from Kafka
- * via {@link KafkaMilvusMessageConsumer}.</p>
+ * <p>Builds the streaming source with its full dependency chain:
+ * {@link KafkaMilvusMessageConsumer} → {@link MilvusProtoDeserializer} →
+ * {@link TimetickOrderingEngine} → {@link MilvusStreamingChangeEventSource}.</p>
  */
 public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<MilvusPartition, MilvusOffsetContext> {
 
@@ -34,6 +35,10 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
     @Override
     public StreamingChangeEventSource<MilvusPartition, MilvusOffsetContext> getStreamingChangeEventSource() {
         MilvusMessageConsumer messageConsumer = new KafkaMilvusMessageConsumer(connectorConfig);
-        return new MilvusStreamingChangeEventSource(connectorConfig, messageConsumer);
+        MilvusValueConverter valueConverter = new MilvusValueConverter(connectorConfig);
+        MilvusColumnarPivot pivot = new MilvusColumnarPivot(valueConverter);
+        MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(connectorConfig.getWireFormat(), pivot);
+        TimetickOrderingEngine orderingEngine = new TimetickOrderingEngine(connectorConfig);
+        return new MilvusStreamingChangeEventSource(connectorConfig, messageConsumer, deserializer, orderingEngine);
     }
 }
