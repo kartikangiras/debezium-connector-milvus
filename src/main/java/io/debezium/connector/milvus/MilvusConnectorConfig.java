@@ -233,6 +233,24 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withImportance(Importance.LOW)
             .withDescription("Batch size for snapshot queries. Default 1000.");
 
+    public static final Field BUFFER_MAX_EVENTS = Field.create("milvus.buffer.max.events")
+            .withDisplayName("Buffer max events")
+            .withType(Type.INT)
+            .withDefault(10000)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Maximum number of events buffered by the timetick ordering engine "
+                    + "before backpressure is applied. Default 10000.");
+
+    public static final Field BUFFER_MAX_BYTES = Field.create("milvus.buffer.max.bytes")
+            .withDisplayName("Buffer max bytes")
+            .withType(Type.LONG)
+            .withDefault(67108864L)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.MEDIUM)
+            .withDescription("Maximum approximate bytes buffered by the timetick ordering engine "
+                    + "before backpressure is applied. Default 67108864 (64 MB).");
+
     private final String milvusUri;
     private final String milvusToken;
     private final String milvusDatabase;
@@ -253,6 +271,8 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final long timetickStallTimeoutMs;
     private final String upsertMode;
     private final int snapshotBatchSize;
+    private final int maxBufferedEvents;
+    private final long maxBufferedBytes;
     private final int maxBatchSize;
     private final long pollIntervalMs;
 
@@ -287,6 +307,8 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.timetickStallTimeoutMs = config.getLong(TIMETICK_STALL_TIMEOUT_MS);
         this.upsertMode = config.getString(UPSERT_MODE);
         this.snapshotBatchSize = config.getInteger(SNAPSHOT_BATCH_SIZE);
+        this.maxBufferedEvents = config.getInteger(BUFFER_MAX_EVENTS);
+        this.maxBufferedBytes = config.getLong(BUFFER_MAX_BYTES);
         this.maxBatchSize = config.getInteger(CommonConnectorConfig.MAX_BATCH_SIZE);
         this.pollIntervalMs = config.getLong(CommonConnectorConfig.POLL_INTERVAL_MS);
     }
@@ -367,6 +389,14 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         return snapshotBatchSize;
     }
 
+    public int getMaxBufferedEvents() {
+        return maxBufferedEvents;
+    }
+
+    public long getMaxBufferedBytes() {
+        return maxBufferedBytes;
+    }
+
     public int getMaxBatchSize() {
         return maxBatchSize;
     }
@@ -432,7 +462,9 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     WIRE_FORMAT,
                     TIMETICK_STALL_TIMEOUT_MS,
                     UPSERT_MODE,
-                    SNAPSHOT_BATCH_SIZE)
+                    SNAPSHOT_BATCH_SIZE,
+                    BUFFER_MAX_EVENTS,
+                    BUFFER_MAX_BYTES)
             .create();
 
     public static Field.Set ALL_FIELDS = Field.setOf(CONFIG_DEFINITION.all());
