@@ -32,6 +32,8 @@ public class MilvusStreamingChangeEventSourceTest {
 
     private MilvusConnectorConfig config;
     private MilvusMessageConsumer messageConsumer;
+    private MilvusProtoDeserializer deserializer;
+    private TimetickOrderingEngine orderingEngine;
     private ChangeEventSource.ChangeEventSourceContext context;
     private MilvusPartition partition;
     private MilvusOffsetContext offsetContext;
@@ -46,11 +48,13 @@ public class MilvusStreamingChangeEventSourceTest {
                 "poll.interval.ms", "100"));
         config = new MilvusConnectorConfig(configuration);
         messageConsumer = mock(MilvusMessageConsumer.class);
+        deserializer = mock(MilvusProtoDeserializer.class);
+        orderingEngine = new TimetickOrderingEngine(config);
         context = mock(ChangeEventSource.ChangeEventSourceContext.class);
         partition = MilvusPartition.create("milvus-test", TOPIC);
         offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(config));
 
-        source = new MilvusStreamingChangeEventSource(config, messageConsumer);
+        source = new MilvusStreamingChangeEventSource(config, messageConsumer, deserializer, orderingEngine);
     }
 
     @Test
@@ -65,11 +69,12 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldPollRawMessages() throws InterruptedException {
+    void shouldPollAndTrackOffset() throws Exception {
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
+        when(deserializer.deserialize(any(RawMilvusMessage.class))).thenReturn(List.of());
 
         source.execute(context, partition, offsetContext);
 
@@ -79,7 +84,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldHandleEmptyPoll() throws InterruptedException {
+    void shouldHandleEmptyPoll() throws Exception {
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
 
@@ -90,7 +95,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldHandlePauseAndResume() throws InterruptedException {
+    void shouldHandlePauseAndResume() throws Exception {
         when(context.isRunning()).thenReturn(true, true, false);
         when(context.isPaused()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
@@ -103,7 +108,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldBreakLoopOnInterrupt() throws InterruptedException {
+    void shouldBreakLoopOnInterrupt() throws Exception {
         when(context.isRunning()).thenReturn(true);
         when(messageConsumer.poll(any(Duration.class))).then(invocation -> {
             Thread.sleep(10);
@@ -128,7 +133,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldResumeFromStoredOffset() throws InterruptedException {
+    void shouldResumeFromStoredOffset() throws Exception {
         offsetContext.setMqPosition(TOPIC, 0, 99L);
         offsetContext.postSnapshotCompletion();
 
@@ -145,7 +150,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldSeekToEarliestWhenSnapshotCompletedAndNoStoredOffset() throws InterruptedException {
+    void shouldSeekToEarliestWhenSnapshotCompletedAndNoStoredOffset() throws Exception {
         offsetContext.postSnapshotCompletion();
 
         when(context.isRunning()).thenReturn(true, false);
@@ -161,7 +166,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldFallbackToEarliestForSnapshotHandoffWhenNoCheckpoint() throws InterruptedException {
+    void shouldFallbackToEarliestForSnapshotHandoffWhenNoCheckpoint() throws Exception {
         // snapshot not completed, no stored offset -> attempts DEFAULT, falls back to
         // EARLIEST
         when(context.isRunning()).thenReturn(true, false);
@@ -173,5 +178,29 @@ public class MilvusStreamingChangeEventSourceTest {
                 Set.of(TOPIC),
                 SeekPosition.EARLIEST,
                 null);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2068")
+    void shouldDeserializeAndBufferEvents() throws Exception {
+        RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
+
+        MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
+                "coll", TOPIC, TOPIC, 100, Map.of("id", 1L));
+        MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
+                null, TOPIC, TOPIC, 200);
+
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
+        when(deserializer.deserialize(any(RawMilvusMessage.class)))
+                .thenReturn(List.of(insert, tick));
+
+        source.execute(context, partition, offsetContext);
+
+        // The insert should have been buffered and the timetick should have updated
+        // the watermark. Since watermark=200 >= TSO=100, the insert should have been
+        // flushed.
+        assertThat(orderingEngine.getBufferedEventCount()).isZero();
+        assertThat(orderingEngine.getGlobalWatermark()).isEqualTo(200L);
     }
 }
