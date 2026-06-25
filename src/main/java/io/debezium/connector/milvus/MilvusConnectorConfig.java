@@ -251,6 +251,15 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withDescription("Maximum approximate bytes buffered by the timetick ordering engine "
                     + "before backpressure is applied. Default 67108864 (64 MB).");
 
+    public static final Field PCHANNEL_NAME = Field.create("milvus.pchannel.name")
+            .withDisplayName("Physical channel name")
+            .withType(Type.STRING)
+            .withDefault("by-dev-rootcoord-dml_0")
+            .withWidth(Width.MEDIUM)
+            .withImportance(Importance.HIGH)
+            .withDescription("Milvus physical channel (pchannel) topic name. "
+                    + "Defaults to 'by-dev-rootcoord-dml_0'.");
+
     private final String milvusUri;
     private final String milvusToken;
     private final String milvusDatabase;
@@ -275,6 +284,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final long maxBufferedBytes;
     private final int maxBatchSize;
     private final long pollIntervalMs;
+    private final String pchannelName;
 
     public MilvusConnectorConfig(Configuration config) {
         super(
@@ -311,6 +321,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.maxBufferedBytes = config.getLong(BUFFER_MAX_BYTES);
         this.maxBatchSize = config.getInteger(CommonConnectorConfig.MAX_BATCH_SIZE);
         this.pollIntervalMs = config.getLong(CommonConnectorConfig.POLL_INTERVAL_MS);
+        this.pchannelName = config.getString(PCHANNEL_NAME);
     }
 
     public String getMilvusUri() {
@@ -405,6 +416,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         return pollIntervalMs;
     }
 
+    public String getPchannelName() {
+        return pchannelName;
+    }
+
     public String getLogicalName() {
         String prefix = getConfig().getString(TOPIC_PREFIX);
         return prefix != null ? prefix : "milvus";
@@ -432,7 +447,9 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     @Override
     protected SourceInfoStructMaker<?> getSourceInfoStructMaker(Version version) {
-        return new MilvusSourceInfoStructMaker();
+        MilvusSourceInfoStructMaker maker = new MilvusSourceInfoStructMaker();
+        maker.init(Module.name(), Module.version(), this);
+        return maker;
     }
 
     @Override
@@ -464,7 +481,8 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     UPSERT_MODE,
                     SNAPSHOT_BATCH_SIZE,
                     BUFFER_MAX_EVENTS,
-                    BUFFER_MAX_BYTES)
+                    BUFFER_MAX_BYTES,
+                    PCHANNEL_NAME)
             .create();
 
     public static Field.Set ALL_FIELDS = Field.setOf(CONFIG_DEFINITION.all());

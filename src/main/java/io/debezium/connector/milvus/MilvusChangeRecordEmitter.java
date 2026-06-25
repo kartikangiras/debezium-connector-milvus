@@ -36,23 +36,25 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     private final MilvusChangeEvent changeEvent;
     private final Envelope.Operation operation;
     private final String[] columnNames;
+    private final String pkFieldName;
 
     public MilvusChangeRecordEmitter(MilvusPartition partition, OffsetContext offsetContext,
-            Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
-            MilvusChangeEvent changeEvent, Envelope.Operation operation,
-            String[] columnNames) {
+                                     Clock clock, RelationalDatabaseConnectorConfig connectorConfig,
+                                     MilvusChangeEvent changeEvent, Envelope.Operation operation,
+                                     String[] columnNames, String pkFieldName) {
         super(partition, offsetContext, clock, connectorConfig);
         this.changeEvent = changeEvent;
         this.operation = operation;
         this.columnNames = columnNames;
+        this.pkFieldName = pkFieldName;
     }
 
     /**
      * Returns the "before" column values for the event.
      *
-     * Delete events carry a "before" state, and even then
-     * it contains only the primary key columns (Milvus {@code DeleteRequest}
-     * does not carry the prior state of the deleted row).
+     * <p>Delete events carry a "before" state containing only the primary key
+     * (Milvus {@code DeleteRequest} does not carry the prior state of the
+     * deleted row). Non-PK columns are set to {@code null}.</p>
      *
      * @return column values for the "before" image, or {@code null} for Insert
      *         and snapshot-read operations
@@ -60,8 +62,19 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     @Override
     protected Object[] getOldColumnValues() {
         if (operation == Envelope.Operation.DELETE && changeEvent instanceof MilvusChangeEvent.Delete delete) {
-            Object pks = delete.getPrimaryKeys();
-            return new Object[] { pks };
+            Object[] values = new Object[columnNames.length];
+            for (int i = 0; i < columnNames.length; i++) {
+                if (columnNames[i].equals(pkFieldName)) {
+                    Object pks = delete.getPrimaryKeys();
+                    if (pks instanceof java.util.List<?> list && !list.isEmpty()) {
+                        values[i] = list.get(0);
+                    }
+                    else {
+                        values[i] = pks;
+                    }
+                }
+            }
+            return values;
         }
         return null;
     }

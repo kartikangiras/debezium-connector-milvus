@@ -5,24 +5,33 @@
  */
 package io.debezium.connector.milvus;
 
+import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.source.spi.ChangeEventSourceFactory;
 import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
+import io.debezium.relational.TableId;
 
 /**
  * Factory for creating Milvus change event sources.
  *
  * <p>Builds the streaming source with its full dependency chain:
  * {@link KafkaMilvusMessageConsumer} → {@link MilvusProtoDeserializer} →
- * {@link TimetickOrderingEngine} → {@link MilvusStreamingChangeEventSource}.</p>
+ * {@link TimetickOrderingEngine} → {@link MilvusStreamingChangeEventSource},
+ * wired with the {@link EventDispatcher} and {@link MilvusDatabaseSchema}.</p>
  */
 public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<MilvusPartition, MilvusOffsetContext> {
 
     private final MilvusConnectorConfig connectorConfig;
+    private final EventDispatcher<MilvusPartition, TableId> dispatcher;
+    private final MilvusDatabaseSchema schema;
 
-    public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig) {
+    public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
+                                          EventDispatcher<MilvusPartition, TableId> dispatcher,
+                                          MilvusDatabaseSchema schema) {
         this.connectorConfig = connectorConfig;
+        this.dispatcher = dispatcher;
+        this.schema = schema;
     }
 
     @Override
@@ -39,6 +48,8 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         MilvusColumnarPivot pivot = new MilvusColumnarPivot(valueConverter);
         MilvusProtoDeserializer deserializer = new MilvusProtoDeserializer(connectorConfig.getWireFormat(), pivot);
         TimetickOrderingEngine orderingEngine = new TimetickOrderingEngine(connectorConfig);
-        return new MilvusStreamingChangeEventSource(connectorConfig, messageConsumer, deserializer, orderingEngine);
+        return new MilvusStreamingChangeEventSource(
+                connectorConfig, messageConsumer, deserializer, orderingEngine,
+                dispatcher, schema);
     }
 }

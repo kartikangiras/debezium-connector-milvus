@@ -5,27 +5,42 @@
  */
 package io.debezium.connector.milvus;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.apache.kafka.connect.source.SourceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.config.CommonConnectorConfig;
 import io.debezium.config.Configuration;
 import io.debezium.config.Field;
+import io.debezium.connector.base.ChangeEventQueue;
 import io.debezium.connector.common.BaseSourceTask;
 import io.debezium.connector.common.CdcSourceTaskContext;
+import io.debezium.connector.common.DebeziumHeaderProducer;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
+import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
+import io.debezium.pipeline.metrics.DefaultChangeEventSourceMetricsFactory;
+import io.debezium.pipeline.spi.Offsets;
+import io.debezium.pipeline.spi.Partition;
+import io.debezium.relational.TableId;
+import io.debezium.snapshot.SnapshotterService;
+import io.debezium.spi.topic.TopicNamingStrategy;
+import io.debezium.util.LoggingContext;
 
 /**
- * Source task for the Milvus connector
+ * Source task for the Milvus connector.
  *
  * <p>
- * Reads raw messages from Kafka via the MQ consumer layer.
- * No deserialization or event processing is performed at this stage.
+ * Wires the full Debezium pipeline: {@link ChangeEventQueue},
+ * {@link EventDispatcher}, {@link ChangeEventSourceCoordinator}.
+ * Raw messages are consumed from Kafka, deserialized, ordered by TSO,
+ * and dispatched as Debezium {@link SourceRecord}s.
  * </p>
  */
 public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusOffsetContext> {
@@ -33,7 +48,9 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusConnectorTask.class);
 
     private volatile MilvusConnectorConfig connectorConfig;
-    private volatile boolean running = false;
+    private volatile CdcSourceTaskContext<MilvusConnectorConfig> taskContext;
+    private volatile ChangeEventQueue<DataChangeEvent> queue;
+    private volatile MilvusErrorHandler errorHandler;
 
     @Override
     public String version() {
@@ -48,33 +65,89 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     @Override
     public CdcSourceTaskContext<MilvusConnectorConfig> preStart(Configuration config) {
         this.connectorConfig = new MilvusConnectorConfig(config);
-        return new CdcSourceTaskContext<>(config, connectorConfig, Collections.emptyMap());
+        this.taskContext = new CdcSourceTaskContext<>(config, connectorConfig, Collections.emptyMap());
+        return this.taskContext;
     }
 
     @Override
     protected ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> start(Configuration config) {
-        LOGGER.info("Starting Milvus connector task — MQ read layer");
-        this.running = true;
-        // MQ read layer only: coordinator wiring deferred
-        LOGGER.info("Milvus connector task started successfully (MQ read layer)");
-        return null;
+        LOGGER.info("Starting Milvus connector task — wiring EventDispatcher pipeline");
+
+        MilvusDatabaseSchema schema = MilvusDatabaseSchema.create(connectorConfig, taskContext);
+
+        MilvusSourceInfo sourceInfo = new MilvusSourceInfo(connectorConfig);
+        MilvusOffsetContext.Loader offsetLoader = new MilvusOffsetContext.Loader(sourceInfo);
+
+        String pchannel = connectorConfig.getPchannelName();
+        Partition.Provider<MilvusPartition> partitionProvider = new MilvusPartition.Provider(connectorConfig,
+                List.of(pchannel));
+
+        Offsets<MilvusPartition, MilvusOffsetContext> previousOffsets = getPreviousOffsets(partitionProvider,
+                offsetLoader);
+
+        this.queue = new ChangeEventQueue.Builder<DataChangeEvent>()
+                .pollInterval(Duration.ofMillis(connectorConfig.getPollIntervalMs()))
+                .maxBatchSize(connectorConfig.getMaxBatchSize())
+                .maxQueueSize(connectorConfig.getMaxQueueSize())
+                .maxQueueSizeInBytes(connectorConfig.getMaxQueueSizeInBytes())
+                .loggingContextSupplier(() -> LoggingContext.forConnector(
+                        Module.name(), connectorConfig.getLogicalName(), "streaming"))
+                .build();
+
+        this.errorHandler = new MilvusErrorHandler(connectorConfig, queue, null);
+
+        TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig
+                .getTopicNamingStrategy(CommonConnectorConfig.TOPIC_NAMING_STRATEGY);
+
+        MilvusEventMetadataProvider metadataProvider = new MilvusEventMetadataProvider();
+
+        DebeziumHeaderProducer headerProducer = new DebeziumHeaderProducer(taskContext);
+        MilvusEventDispatcher dispatcher = new MilvusEventDispatcher(
+                connectorConfig,
+                topicNamingStrategy,
+                schema,
+                queue,
+                connectorConfig.getTableFilters().dataCollectionFilter(),
+                DataChangeEvent::new,
+                metadataProvider,
+                connectorConfig.schemaNameAdjuster(),
+                headerProducer);
+
+        MilvusChangeEventSourceFactory factory = new MilvusChangeEventSourceFactory(
+                connectorConfig, dispatcher, schema);
+
+        SnapshotterService snapshotterService = MilvusSnapshotter.createService();
+
+        ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> coordinator = new ChangeEventSourceCoordinator<>(
+                previousOffsets,
+                errorHandler,
+                MilvusConnector.class,
+                connectorConfig,
+                factory,
+                new DefaultChangeEventSourceMetricsFactory<>(),
+                dispatcher,
+                schema,
+                null,
+                null,
+                snapshotterService);
+
+        coordinator.start(taskContext, this.queue, metadataProvider);
+
+        LOGGER.info("Milvus connector task started successfully — pipeline active");
+        return coordinator;
     }
 
     @Override
     protected List<SourceRecord> doPoll() throws InterruptedException {
-        if (!running) {
-            return Collections.emptyList();
-        }
-        Thread.sleep(connectorConfig != null
-                ? connectorConfig.getPollIntervalMs()
-                : 500);
-        return Collections.emptyList();
+        List<DataChangeEvent> events = queue.poll();
+        return events.stream()
+                .map(DataChangeEvent::getRecord)
+                .collect(Collectors.toList());
     }
 
     @Override
     protected void doStop() {
         LOGGER.info("Stopping Milvus connector task");
-        this.running = false;
         LOGGER.info("Milvus connector task stopped");
     }
 
@@ -85,6 +158,6 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
     @Override
     protected Optional<ErrorHandler> getErrorHandler() {
-        return Optional.empty();
+        return Optional.ofNullable(errorHandler);
     }
 }

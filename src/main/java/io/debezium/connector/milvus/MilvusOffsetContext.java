@@ -109,6 +109,18 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
         return Long.parseLong(value.toString());
     }
 
+    /**
+     * Update the source info fields for a change event about to be dispatched.
+     */
+    public void updateForEvent(String collectionName, String pchannel,
+                               String vchannel, long tso) {
+        sourceInfo.setCollectionName(collectionName);
+        sourceInfo.setPchannel(pchannel);
+        sourceInfo.setVchannel(vchannel);
+        sourceInfo.setTso(tso);
+        sourceInfo.setTimestamp(java.time.Instant.now());
+    }
+
     public boolean isSnapshotCompleted() {
         return snapshotCompleted;
     }

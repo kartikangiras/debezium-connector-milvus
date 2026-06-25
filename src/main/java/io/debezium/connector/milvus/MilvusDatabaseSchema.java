@@ -5,15 +5,28 @@
  */
 package io.debezium.connector.milvus;
 
+import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.connector.common.CdcSourceTaskContext;
+import io.debezium.relational.Column;
+import io.debezium.relational.ColumnEditor;
 import io.debezium.relational.CustomConverterRegistry;
 import io.debezium.relational.Key;
 import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.RelationalDatabaseSchema;
+import io.debezium.relational.Table;
+import io.debezium.relational.TableEditor;
 import io.debezium.relational.TableId;
 import io.debezium.relational.TableSchemaBuilder;
 import io.debezium.relational.Tables;
@@ -26,11 +39,17 @@ import io.debezium.spi.topic.TopicNamingStrategy;
  * Database schema for Milvus collections.
  *
  * <p>
- * Extends {@link RelationalDatabaseSchema} for future use when
- * deserialization and table registration are added.
+ * Extends {@link RelationalDatabaseSchema} and supports dynamic table
+ * registration from streaming events via {@link #registerCollection}.
  * </p>
  */
 public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(MilvusDatabaseSchema.class);
+
+    private final Set<TableId> registeredTableIds = new HashSet<>();
+    private final Map<TableId, String[]> registeredColumnNames = new HashMap<>();
+    private final Map<TableId, String> registeredPkFields = new HashMap<>();
 
     public MilvusDatabaseSchema(RelationalDatabaseConnectorConfig config,
                                 TopicNamingStrategy<TableId> topicNamingStrategy,
@@ -52,8 +71,9 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
         Tables.ColumnNameFilter columnFilter = (catalog, schema, table, column) -> true;
         SchemaNameAdjuster schemaNameAdjuster = connectorConfig.schemaNameAdjuster();
 
+        MilvusValueConverter valueConverter = new MilvusValueConverter(connectorConfig);
         TableSchemaBuilder tableSchemaBuilder = new TableSchemaBuilder(
-                null,
+                valueConverter,
                 schemaNameAdjuster,
                 new CustomConverterRegistry(Collections.emptyList()),
                 connectorConfig.getSourceInfoStructMaker(CommonConnectorConfig.Version.V1).schema(),
@@ -73,7 +93,187 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                 taskContext);
     }
 
+    /**
+     * Dynamically register a Milvus collection as a relational table.
+     *
+     * <p>Uses the first Insert event's data map to infer column names
+     * and JDBC types. The first field in the data map is treated as
+     * the primary key (Milvus convention).</p>
+     *
+     * @param dbName         Milvus database name
+     * @param collectionName Milvus collection name
+     * @param sampleData     data map from the first Insert event (used to infer types)
+     * @return {@code true} if newly registered, {@code false} if already registered
+     */
+    public synchronized boolean registerCollection(String dbName, String collectionName,
+                                                   Map<String, Object> sampleData) {
+        TableId tableId = new TableId(null, dbName, collectionName);
+
+        if (registeredTableIds.contains(tableId)) {
+            return false;
+        }
+
+        List<String> fieldNames = new ArrayList<>(sampleData.keySet());
+        if (fieldNames.isEmpty()) {
+            LOGGER.warn("Cannot register collection {} — empty data map", collectionName);
+            return false;
+        }
+
+        String pkFieldName = fieldNames.get(0);
+        int position = 1;
+
+        TableEditor tableEditor = Table.editor().tableId(tableId);
+
+        for (String fieldName : fieldNames) {
+            Object value = sampleData.get(fieldName);
+            int jdbcType = inferJdbcType(value);
+            String typeName = inferTypeName(value);
+            boolean isPk = fieldName.equals(pkFieldName);
+
+            ColumnEditor columnEditor = Column.editor()
+                    .name(fieldName)
+                    .type(typeName)
+                    .jdbcType(jdbcType)
+                    .optional(!isPk)
+                    .position(position++);
+
+            if (jdbcType == Types.VARCHAR) {
+                columnEditor.length(65535);
+            }
+
+            tableEditor.addColumn(columnEditor.create());
+        }
+
+        tableEditor.setPrimaryKeyNames(pkFieldName);
+        Table table = tableEditor.create();
+
+        refresh(table);
+
+        registeredTableIds.add(tableId);
+        registeredColumnNames.put(tableId, fieldNames.toArray(new String[0]));
+        registeredPkFields.put(tableId, pkFieldName);
+
+        LOGGER.info("Registered collection schema: tableId={}, columns={}, pk={}",
+                tableId, fieldNames, pkFieldName);
+        return true;
+    }
+
+    /**
+     * Check whether a collection has been registered.
+     */
+    public boolean isCollectionRegistered(TableId tableId) {
+        return registeredTableIds.contains(tableId);
+    }
+
+    /**
+     * Get the column names for a registered collection.
+     */
+    public String[] getColumnNames(TableId tableId) {
+        return registeredColumnNames.get(tableId);
+    }
+
+    /**
+     * Get the primary key field name for a registered collection.
+     */
+    public String getPkFieldName(TableId tableId) {
+        return registeredPkFields.get(tableId);
+    }
+
+    /**
+     * Dynamically register a Milvus collection as a relational table using only field names.
+     *
+     * <p>When no sample data is available to infer types, all columns default to VARCHAR.
+     * The first field in the list is treated as the primary key.</p>
+     *
+     * @param dbName         Milvus database name
+     * @param collectionName Milvus collection name
+     * @param fieldNames     ordered list of field names
+     */
     public void registerCollection(String dbName, String collectionName, List<String> fieldNames) {
-        // TODO: implement dynamic table registration when deserialization is added
+        TableId tableId = new TableId(null, dbName, collectionName);
+
+        if (registeredTableIds.contains(tableId)) {
+            return;
+        }
+
+        if (fieldNames == null || fieldNames.isEmpty()) {
+            LOGGER.warn("Cannot register collection {} — empty field name list", collectionName);
+            return;
+        }
+
+        String pkFieldName = fieldNames.get(0);
+        int position = 1;
+
+        TableEditor tableEditor = Table.editor().tableId(tableId);
+
+        for (String fieldName : fieldNames) {
+            boolean isPk = fieldName.equals(pkFieldName);
+
+            ColumnEditor columnEditor = Column.editor()
+                    .name(fieldName)
+                    .type("VARCHAR")
+                    .jdbcType(Types.VARCHAR)
+                    .optional(!isPk)
+                    .length(65535)
+                    .position(position++);
+
+            tableEditor.addColumn(columnEditor.create());
+        }
+
+        tableEditor.setPrimaryKeyNames(pkFieldName);
+        Table table = tableEditor.create();
+
+        refresh(table);
+
+        registeredTableIds.add(tableId);
+        registeredColumnNames.put(tableId, fieldNames.toArray(new String[0]));
+        registeredPkFields.put(tableId, pkFieldName);
+
+        LOGGER.info("Registered collection schema: tableId={}, columns={}, pk={}",
+                tableId, fieldNames, pkFieldName);
+    }
+
+    private static int inferJdbcType(Object value) {
+        if (value instanceof Long) {
+            return Types.BIGINT;
+        }
+        if (value instanceof Integer) {
+            return Types.INTEGER;
+        }
+        if (value instanceof Double) {
+            return Types.DOUBLE;
+        }
+        if (value instanceof Float) {
+            return Types.FLOAT;
+        }
+        if (value instanceof Boolean) {
+            return Types.BOOLEAN;
+        }
+        if (value instanceof byte[] || value instanceof float[]) {
+            return Types.BLOB;
+        }
+        return Types.VARCHAR;
+    }
+
+    private static String inferTypeName(Object value) {
+        if (value instanceof Long) {
+            return "INT64";
+        }
+        if (value instanceof Integer) {
+            return "INT32";
+        }
+        if (value instanceof Double) {
+            return "DOUBLE";
+        }
+        if (value instanceof Float) {
+            return "FLOAT";
+        }
+        if (value instanceof Boolean) {
+            return "BOOLEAN";
+        }
+        if (value instanceof byte[] || value instanceof float[]) {
+            return "BLOB";
+        }
+        return "VARCHAR";
     }
 }
