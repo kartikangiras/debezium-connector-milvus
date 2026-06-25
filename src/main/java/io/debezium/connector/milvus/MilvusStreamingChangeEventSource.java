@@ -15,8 +15,12 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.data.Envelope;
+import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
+import io.debezium.relational.TableId;
+import io.debezium.util.Clock;
 import io.debezium.util.Strings;
 
 /**
@@ -29,6 +33,8 @@ import io.debezium.util.Strings;
  * <li>Buffer DML/DDL events and update watermark via
  * {@link TimetickOrderingEngine}</li>
  * <li>Flush ready events in strict TSO order</li>
+ * <li>Dispatch flushed events through the Debezium
+ * {@link EventDispatcher} pipeline</li>
  * <li>Update offset context with MQ position and vchannel timeticks</li>
  * </ol>
  *
@@ -42,23 +48,29 @@ public class MilvusStreamingChangeEventSource
     private final MilvusMessageConsumer messageConsumer;
     private final MilvusProtoDeserializer deserializer;
     private final TimetickOrderingEngine orderingEngine;
+    private final EventDispatcher<MilvusPartition, TableId> dispatcher;
+    private final MilvusDatabaseSchema databaseSchema;
     private final Duration pollTimeout;
 
     public MilvusStreamingChangeEventSource(MilvusConnectorConfig connectorConfig,
-            MilvusMessageConsumer messageConsumer,
-            MilvusProtoDeserializer deserializer,
-            TimetickOrderingEngine orderingEngine) {
+                                            MilvusMessageConsumer messageConsumer,
+                                            MilvusProtoDeserializer deserializer,
+                                            TimetickOrderingEngine orderingEngine,
+                                            EventDispatcher<MilvusPartition, TableId> dispatcher,
+                                            MilvusDatabaseSchema databaseSchema) {
         this.connectorConfig = connectorConfig;
         this.messageConsumer = messageConsumer;
         this.deserializer = deserializer;
         this.orderingEngine = orderingEngine;
+        this.dispatcher = dispatcher;
+        this.databaseSchema = databaseSchema;
         this.pollTimeout = Duration.ofMillis(connectorConfig.getPollIntervalMs());
     }
 
     @Override
     public void execute(ChangeEventSource.ChangeEventSourceContext context,
-            MilvusPartition partition,
-            MilvusOffsetContext offsetContext)
+                        MilvusPartition partition,
+                        MilvusOffsetContext offsetContext)
             throws InterruptedException {
 
         LOGGER.info("Starting Milvus streaming change event source for partition {}", partition);
@@ -89,7 +101,7 @@ public class MilvusStreamingChangeEventSource
 
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
-                    dispatchFlushedEvents(flushed, offsetContext);
+                    dispatchFlushedEvents(flushed, partition, offsetContext);
                 }
 
                 if (orderingEngine.isStalled()) {
@@ -102,37 +114,43 @@ public class MilvusStreamingChangeEventSource
 
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
-                        dispatchFlushedEvents(forceFlushed, offsetContext);
+                        dispatchFlushedEvents(forceFlushed, partition, offsetContext);
                     }
                 }
 
                 bufferFull = false;
 
                 offsetContext.setVchannelTimeticks(orderingEngine.getVchannelTimeticks());
-            } catch (MilvusBufferFullException e) {
+            }
+            catch (MilvusBufferFullException e) {
                 LOGGER.warn("Buffer full: {}. Pausing poll, waiting for watermark to advance.", e.getMessage());
                 bufferFull = true;
 
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
-                    dispatchFlushedEvents(flushed, offsetContext);
+                    dispatchFlushedEvents(flushed, partition, offsetContext);
                     bufferFull = false;
-                } else if (orderingEngine.isStalled()) {
+                }
+                else if (orderingEngine.isStalled()) {
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
-                        dispatchFlushedEvents(forceFlushed, offsetContext);
+                        dispatchFlushedEvents(forceFlushed, partition, offsetContext);
                     }
                     bufferFull = false;
-                } else {
+                }
+                else {
                     Thread.sleep(Math.min(pollTimeout.toMillis(), 1000));
                 }
-            } catch (MilvusWireFormatMismatchException e) {
+            }
+            catch (MilvusWireFormatMismatchException e) {
                 LOGGER.error("Fatal wire format error during streaming: {}", e.getMessage(), e);
                 throw new io.debezium.DebeziumException("Wire format mismatch during streaming", e);
-            } catch (Exception e) {
+            }
+            catch (Exception e) {
                 if (e instanceof InterruptedException) {
                     LOGGER.info("Streaming interrupted");
-                } else {
+                }
+                else {
                     LOGGER.error("Error during streaming execution", e);
                 }
                 throw e;
@@ -150,7 +168,7 @@ public class MilvusStreamingChangeEventSource
      * Process raw messages: deserialize and route to the ordering engine.
      */
     private void processMessages(List<RawMilvusMessage> messages, String pchannel,
-            MilvusOffsetContext offsetContext)
+                                 MilvusOffsetContext offsetContext)
             throws MilvusWireFormatMismatchException, MilvusBufferFullException {
 
         for (RawMilvusMessage message : messages) {
@@ -162,7 +180,8 @@ public class MilvusStreamingChangeEventSource
                 if (event instanceof MilvusChangeEvent.TimeTick timeTick) {
                     String vchannel = Strings.defaultIfEmpty(timeTick.getVchannel(), pchannel);
                     orderingEngine.updateWatermark(vchannel, timeTick.getTso());
-                } else {
+                }
+                else {
                     orderingEngine.buffer(event);
                 }
             }
@@ -170,23 +189,80 @@ public class MilvusStreamingChangeEventSource
     }
 
     /**
-     * Dispatch flushed events. Currently logs; full dispatch to Debezium
-     * ChangeRecordEmitter will be wired when the schema layer is integrated.
+     * Dispatch flushed events through the Debezium {@link EventDispatcher}.
+     *
+     * <p>
+     * For each event: determines the operation, registers the collection
+     * schema if needed, creates a {@link MilvusChangeRecordEmitter}, and
+     * dispatches via {@link EventDispatcher#dispatchDataChangeEvent}.
+     * </p>
      */
     private void dispatchFlushedEvents(List<MilvusChangeEvent> events,
-            MilvusOffsetContext offsetContext) {
-        for (MilvusChangeEvent event : events) {
-            LOGGER.debug("Dispatching event: type={}, collection={}, vchannel={}, tso={}",
-                    event.getClass().getSimpleName(),
-                    event.getCollectionName(),
-                    event.getVchannel(),
-                    event.getTso());
+                                       MilvusPartition partition,
+                                       MilvusOffsetContext offsetContext)
+            throws InterruptedException {
+        String dbName = connectorConfig.getMilvusDatabase();
+        int dispatched = 0;
 
-            // TODO: Wire to MilvusChangeRecordEmitter + ChangeEventDispatcher
-            // when schema layer is integrated
+        for (MilvusChangeEvent event : events) {
+            String collectionName = event.getCollectionName();
+
+            if (collectionName == null || collectionName.isEmpty()) {
+                LOGGER.debug("Skipping event with no collection name: type={}, tso={}",
+                        event.getClass().getSimpleName(), event.getTso());
+                continue;
+            }
+
+            TableId tableId = new TableId(null, dbName, collectionName);
+
+            if (!databaseSchema.isCollectionRegistered(tableId)) {
+                if (event instanceof MilvusChangeEvent.Insert insert && insert.getData() != null
+                        && !insert.getData().isEmpty()) {
+                    databaseSchema.registerCollection(dbName, collectionName, insert.getData());
+                }
+                else {
+                    LOGGER.debug("Skipping event for unregistered collection {}: type={}",
+                            collectionName, event.getClass().getSimpleName());
+                    continue;
+                }
+            }
+
+            Envelope.Operation operation = determineOperation(event);
+            if (operation == null) {
+                continue;
+            }
+
+            String[] columnNames = databaseSchema.getColumnNames(tableId);
+            String pkFieldName = databaseSchema.getPkFieldName(tableId);
+
+            offsetContext.updateForEvent(collectionName,
+                    event.getPchannel(), event.getVchannel(), event.getTso());
+
+            MilvusChangeRecordEmitter emitter = new MilvusChangeRecordEmitter(
+                    partition, offsetContext, Clock.SYSTEM, connectorConfig,
+                    event, operation, columnNames, pkFieldName);
+
+            dispatcher.dispatchDataChangeEvent(partition, tableId, emitter);
+            dispatched++;
         }
-        LOGGER.info("Dispatched {} events (watermark={})",
-                events.size(), orderingEngine.getGlobalWatermark());
+
+        if (dispatched > 0) {
+            LOGGER.info("Dispatched {} events (watermark={})",
+                    dispatched, orderingEngine.getGlobalWatermark());
+        }
+    }
+
+    /**
+     * Map a change event to the corresponding Debezium envelope operation.
+     */
+    private static Envelope.Operation determineOperation(MilvusChangeEvent event) {
+        if (event instanceof MilvusChangeEvent.Insert) {
+            return Envelope.Operation.CREATE;
+        }
+        if (event instanceof MilvusChangeEvent.Delete) {
+            return Envelope.Operation.DELETE;
+        }
+        return null;
     }
 
     /**
@@ -220,25 +296,28 @@ public class MilvusStreamingChangeEventSource
      * Seek the consumer to the appropriate starting position.
      */
     private void seekConsumer(String pchannel, TopicPartition tp,
-            MilvusOffsetContext offsetContext) {
+                              MilvusOffsetContext offsetContext) {
         Long storedOffset = offsetContext.getMqOffset(pchannel);
 
         if (storedOffset != null) {
             messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.STORED_OFFSET_PLUS_ONE,
                     Map.of(tp, storedOffset));
             LOGGER.info("Resumed from stored offset + 1 = {}", storedOffset + 1);
-        } else if (!offsetContext.isSnapshotCompleted()) {
+        }
+        else if (!offsetContext.isSnapshotCompleted()) {
             Map<TopicPartition, Long> checkpointOffsets = resolveCheckpointOffsets(pchannel);
             if (checkpointOffsets != null && !checkpointOffsets.isEmpty()) {
                 messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.DEFAULT, checkpointOffsets);
                 LOGGER.info("Resumed from snapshot checkpoint offset for pchannel {}", pchannel);
-            } else {
+            }
+            else {
                 LOGGER.warn(
                         "No checkpoint offset available for snapshot handoff on pchannel {}, falling back to EARLIEST",
                         pchannel);
                 messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.EARLIEST, null);
             }
-        } else {
+        }
+        else {
             messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.EARLIEST, null);
             LOGGER.info("No stored offset, seeking to earliest");
         }

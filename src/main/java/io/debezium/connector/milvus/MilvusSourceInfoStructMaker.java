@@ -19,6 +19,7 @@ import io.debezium.connector.AbstractSourceInfoStructMaker;
  */
 public class MilvusSourceInfoStructMaker extends AbstractSourceInfoStructMaker<MilvusSourceInfo> {
 
+    private static final String COLLECTION_KEY = "collection";
     private static final String PCHANNEL_KEY = "pchannel";
     private static final String VCHANNEL_KEY = "vchannel";
     private static final String TSO_KEY = "tso";
@@ -32,9 +33,12 @@ public class MilvusSourceInfoStructMaker extends AbstractSourceInfoStructMaker<M
                 .field(AbstractSourceInfo.DEBEZIUM_CONNECTOR_KEY, Schema.STRING_SCHEMA)
                 .field(AbstractSourceInfo.SERVER_NAME_KEY, Schema.STRING_SCHEMA)
                 .field(AbstractSourceInfo.TIMESTAMP_KEY, Schema.OPTIONAL_INT64_SCHEMA)
+                .field(AbstractSourceInfo.TIMESTAMP_US_KEY, Schema.OPTIONAL_INT64_SCHEMA)
+                .field(AbstractSourceInfo.TIMESTAMP_NS_KEY, Schema.OPTIONAL_INT64_SCHEMA)
                 .field(AbstractSourceInfo.SNAPSHOT_KEY, Schema.OPTIONAL_STRING_SCHEMA)
+                .field(AbstractSourceInfo.SEQUENCE_KEY, Schema.OPTIONAL_STRING_SCHEMA)
                 .field(AbstractSourceInfo.DATABASE_NAME_KEY, Schema.OPTIONAL_STRING_SCHEMA)
-                .field(AbstractSourceInfo.COLLECTION_NAME_KEY, Schema.OPTIONAL_STRING_SCHEMA)
+                .field(COLLECTION_KEY, Schema.OPTIONAL_STRING_SCHEMA)
                 .field(PCHANNEL_KEY, Schema.OPTIONAL_STRING_SCHEMA)
                 .field(VCHANNEL_KEY, Schema.OPTIONAL_STRING_SCHEMA)
                 .field(TSO_KEY, Schema.OPTIONAL_INT64_SCHEMA)
@@ -44,6 +48,7 @@ public class MilvusSourceInfoStructMaker extends AbstractSourceInfoStructMaker<M
     @Override
     public Struct struct(MilvusSourceInfo sourceInfo) {
         Struct struct = super.commonStruct(sourceInfo);
+        struct.put(COLLECTION_KEY, sourceInfo.getCollectionName());
         struct.put(PCHANNEL_KEY, sourceInfo.getPchannel());
         struct.put(VCHANNEL_KEY, sourceInfo.getVchannel());
         struct.put(TSO_KEY, sourceInfo.getTso());

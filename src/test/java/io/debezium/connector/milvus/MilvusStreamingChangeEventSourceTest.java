@@ -7,6 +7,8 @@ package io.debezium.connector.milvus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,7 +26,9 @@ import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
 import io.debezium.doc.FixFor;
+import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
+import io.debezium.relational.TableId;
 
 public class MilvusStreamingChangeEventSourceTest {
 
@@ -39,6 +43,10 @@ public class MilvusStreamingChangeEventSourceTest {
     private MilvusOffsetContext offsetContext;
     private MilvusStreamingChangeEventSource source;
 
+    private EventDispatcher<MilvusPartition, TableId> dispatcher;
+    private MilvusDatabaseSchema schema;
+
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         Configuration configuration = Configuration.from(Map.of(
@@ -54,7 +62,17 @@ public class MilvusStreamingChangeEventSourceTest {
         partition = MilvusPartition.create("milvus-test", TOPIC);
         offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(config));
 
-        source = new MilvusStreamingChangeEventSource(config, messageConsumer, deserializer, orderingEngine);
+        dispatcher = mock(EventDispatcher.class);
+        schema = mock(MilvusDatabaseSchema.class);
+
+        when(schema.isCollectionRegistered(any(TableId.class))).thenReturn(false);
+        when(schema.registerCollection(anyString(), anyString(), anyMap())).thenReturn(true);
+        when(schema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id" });
+        when(schema.getPkFieldName(any(TableId.class))).thenReturn("id");
+
+        source = new MilvusStreamingChangeEventSource(
+                config, messageConsumer, deserializer, orderingEngine,
+                dispatcher, schema);
     }
 
     @Test
@@ -120,7 +138,7 @@ public class MilvusStreamingChangeEventSourceTest {
                 source.execute(context, partition, offsetContext);
             }
             catch (InterruptedException e) {
-                // expected
+                // expecte
             }
         });
         testThread.start();
@@ -167,8 +185,6 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldFallbackToEarliestForSnapshotHandoffWhenNoCheckpoint() throws Exception {
-        // snapshot not completed, no stored offset -> attempts DEFAULT, falls back to
-        // EARLIEST
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
 
@@ -194,6 +210,7 @@ public class MilvusStreamingChangeEventSourceTest {
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
         when(deserializer.deserialize(any(RawMilvusMessage.class)))
                 .thenReturn(List.of(insert, tick));
+        when(dispatcher.dispatchDataChangeEvent(any(), any(), any())).thenReturn(true);
 
         source.execute(context, partition, offsetContext);
 
@@ -202,5 +219,57 @@ public class MilvusStreamingChangeEventSourceTest {
         // flushed.
         assertThat(orderingEngine.getBufferedEventCount()).isZero();
         assertThat(orderingEngine.getGlobalWatermark()).isEqualTo(200L);
+
+        verify(dispatcher).dispatchDataChangeEvent(any(), any(), any());
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2068")
+    void shouldDispatchInsertEventThroughPipeline() throws Exception {
+        RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
+
+        Map<String, Object> data = Map.of("id", 42L, "name", "test-vector");
+        MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
+                "test_collection", TOPIC, TOPIC, 100, data);
+        MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
+                null, TOPIC, TOPIC, 200);
+
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
+        when(deserializer.deserialize(any(RawMilvusMessage.class)))
+                .thenReturn(List.of(insert, tick));
+        when(dispatcher.dispatchDataChangeEvent(any(), any(), any())).thenReturn(true);
+
+        when(schema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id", "name" });
+        when(schema.getPkFieldName(any(TableId.class))).thenReturn("id");
+
+        source.execute(context, partition, offsetContext);
+
+        verify(schema).registerCollection("default", "test_collection", data);
+
+        verify(dispatcher).dispatchDataChangeEvent(
+                any(MilvusPartition.class),
+                any(TableId.class),
+                any(MilvusChangeRecordEmitter.class));
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2068")
+    void shouldSkipEventsWithNoCollectionName() throws Exception {
+        RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
+
+        MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
+                null, TOPIC, TOPIC, 100, Map.of("id", 1L));
+        MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
+                null, TOPIC, TOPIC, 200);
+
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of(msg));
+        when(deserializer.deserialize(any(RawMilvusMessage.class)))
+                .thenReturn(List.of(insert, tick));
+
+        source.execute(context, partition, offsetContext);
+
+        verify(dispatcher, never()).dispatchDataChangeEvent(any(), any(), any());
     }
 }

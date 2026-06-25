@@ -5,15 +5,20 @@
  */
 package io.debezium.connector.milvus;
 
+import java.sql.Types;
 import java.util.List;
 
+import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.SchemaBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.ProtocolMessageEnum;
 
+import io.debezium.relational.Column;
 import io.debezium.relational.ValueConverter;
+import io.debezium.relational.ValueConverterProvider;
 import io.debezium.util.Strings;
 import io.milvus.grpc.DataType;
 
@@ -60,7 +65,7 @@ import io.milvus.grpc.DataType;
  * → {@code float[]}</li>
  * </ul>
  */
-public class MilvusValueConverter implements ValueConverter {
+public class MilvusValueConverter implements ValueConverter, ValueConverterProvider {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusValueConverter.class);
 
@@ -81,7 +86,16 @@ public class MilvusValueConverter implements ValueConverter {
         if (value == null) {
             return null;
         }
-        // Passthrough for already-correct Java types
+
+        if (value instanceof float[] floats) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(floats.length * Float.BYTES)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            for (float f : floats) {
+                buf.putFloat(f);
+            }
+            return buf.array();
+        }
+
         if (value instanceof String
                 || value instanceof Integer
                 || value instanceof Long
@@ -91,17 +105,14 @@ public class MilvusValueConverter implements ValueConverter {
                 || value instanceof Short
                 || value instanceof Byte
                 || value instanceof byte[]
-                || value instanceof float[]
                 || value instanceof List<?>) {
             return value;
         }
 
-        // Protobuf ByteString → byte[]
         if (value instanceof ByteString bs) {
             return bs.toByteArray();
         }
 
-        // Proto enums → Integer (their wire number)
         if (value instanceof ProtocolMessageEnum e) {
             return e.getNumber();
         }
@@ -230,7 +241,6 @@ public class MilvusValueConverter implements ValueConverter {
         return v instanceof String s ? s : v.toString();
     }
 
-    @SuppressWarnings("unchecked")
     private List<?> toList(Object v) {
         if (v instanceof List<?>) {
             return (List<?>) v;
@@ -277,5 +287,31 @@ public class MilvusValueConverter implements ValueConverter {
         }
         throw new IllegalArgumentException(
                 "Cannot convert " + v.getClass().getName() + " to float[]");
+    }
+
+    @Override
+    public SchemaBuilder schemaBuilder(Column column) {
+        switch (column.jdbcType()) {
+            case Types.BIGINT:
+                return SchemaBuilder.int64();
+            case Types.INTEGER:
+                return SchemaBuilder.int32();
+            case Types.DOUBLE:
+                return SchemaBuilder.float64();
+            case Types.FLOAT:
+                return SchemaBuilder.float32();
+            case Types.BOOLEAN:
+                return SchemaBuilder.bool();
+            case Types.BLOB:
+                return SchemaBuilder.bytes();
+            case Types.VARCHAR:
+            default:
+                return SchemaBuilder.string();
+        }
+    }
+
+    @Override
+    public ValueConverter converter(Column column, Field field) {
+        return this;
     }
 }
