@@ -303,7 +303,7 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
             case Types.BOOLEAN:
                 return SchemaBuilder.bool();
             case Types.BLOB:
-                return SchemaBuilder.bytes();
+                return SchemaBuilder.bytes().optional();
             case Types.VARCHAR:
             default:
                 return SchemaBuilder.string();
