@@ -42,6 +42,12 @@
         <version.debezium>${project.version}</version.debezium>
         <version.milvus.sdk>2.6.0</version.milvus.sdk>
         <version.msgpack>0.9.9</version.msgpack>
+        <version.docker.plugin>0.48.1</version.docker.plugin>
+        <version.io.grpc>1.59.1</version.io.grpc>
+
+        <!-- Integration test properties -->
+        <docker.skip>true</docker.skip>
+        <kafka.init.timeout>120000</kafka.init.timeout>
     </properties>
 
     <repositories>
@@ -59,6 +65,61 @@
             </snapshots>
         </repository>
     </repositories>
+
+    <!--
+        Override the Debezium BOM's grpc version (1.56.1) with 1.59.1.
+        MilvusClientV2 requires io.grpc.ForwardingChannelBuilder2 which was
+        introduced in gRPC 1.59.0 and is absent from 1.56.1.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-api</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-core</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-stub</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-protobuf</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-protobuf-lite</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-context</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-netty</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-netty-shaded</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-util</artifactId>
+                <version>${version.io.grpc}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -142,8 +203,56 @@
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
+            <artifactId>debezium-embedded</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-embedded</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
             <artifactId>debezium-util</artifactId>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-api</artifactId>
+            <version>1.59.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
+            <version>1.59.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+            <version>1.59.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-core</artifactId>
+            <version>1.59.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-context</artifactId>
+            <version>1.59.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.17.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -176,6 +285,8 @@
                     <enableAssertions>true</enableAssertions>
                     <systemPropertyVariables combine.children="append">
                         <skipLongRunningTests>${skipLongRunningTests}</skipLongRunningTests>
+                        <kafka.bootstrap.servers>localhost:9092</kafka.bootstrap.servers>
+                        <milvus.uri>http://localhost:19530</milvus.uri>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
@@ -192,10 +303,172 @@
                 </executions>
             </plugin>
 
+            <!--
+                fabric8 docker-maven-plugin
+                Starts etcd → minio → kafka → milvus in pre-integration-test,
+                stops them in post-integration-test.
+            -->
+            <plugin>
+                <groupId>io.fabric8</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <version>${version.docker.plugin}</version>
+                <configuration>
+                    <skip>${docker.skip}</skip>
+                    <autoCreateCustomNetworks>true</autoCreateCustomNetworks>
+                    <images>
+
+                        <image>
+                            <name>quay.io/coreos/etcd:v3.5.18</name>
+                            <alias>etcd</alias>
+                            <run>
+                                <network>
+                                    <mode>custom</mode>
+                                    <name>milvus-it-net</name>
+                                    <alias>etcd</alias>
+                                </network>
+                                <ports>
+                                    <port>2379:2379</port>
+                                </ports>
+                                <cmd>etcd
+                                    --advertise-client-urls http://etcd:2379
+                                    --listen-client-urls http://0.0.0.0:2379</cmd>
+                                <wait>
+                                    <http>
+                                        <url>http://localhost:2379/health</url>
+                                        <method>GET</method>
+                                        <status>200</status>
+                                    </http>
+                                    <time>60000</time>
+                                </wait>
+                            </run>
+                        </image>
+
+                        <image>
+                            <name>minio/minio:RELEASE.2023-03-20T20-16-18Z</name>
+                            <alias>minio</alias>
+                            <run>
+                                <network>
+                                    <mode>custom</mode>
+                                    <name>milvus-it-net</name>
+                                    <alias>minio</alias>
+                                </network>
+                                <ports>
+                                    <port>9000:9000</port>
+                                </ports>
+                                <env>
+                                    <MINIO_ACCESS_KEY>minioadmin</MINIO_ACCESS_KEY>
+                                    <MINIO_SECRET_KEY>minioadmin</MINIO_SECRET_KEY>
+                                </env>
+                                <cmd>server /data</cmd>
+                                <wait>
+                                    <http>
+                                        <url>http://localhost:9000/minio/health/live</url>
+                                        <method>GET</method>
+                                        <status>200</status>
+                                    </http>
+                                    <time>60000</time>
+                                </wait>
+                            </run>
+                        </image>
+
+                        <image>
+                            <name>apache/kafka:3.8.1</name>
+                            <alias>kafka</alias>
+                            <run>
+                                <network>
+                                    <mode>custom</mode>
+                                    <name>milvus-it-net</name>
+                                    <alias>kafka</alias>
+                                </network>
+                                <ports>
+                                    <port>9092:9092</port>
+                                </ports>
+                                <env>
+                                    <KAFKA_NODE_ID>1</KAFKA_NODE_ID>
+                                    <KAFKA_PROCESS_ROLES>broker,controller</KAFKA_PROCESS_ROLES>
+                                    <KAFKA_CONTROLLER_QUORUM_VOTERS>1@localhost:9093</KAFKA_CONTROLLER_QUORUM_VOTERS>
+                                    <KAFKA_LISTENERS>INTERNAL://0.0.0.0:19092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093</KAFKA_LISTENERS>
+                                    <KAFKA_ADVERTISED_LISTENERS>INTERNAL://kafka:19092,EXTERNAL://localhost:9092</KAFKA_ADVERTISED_LISTENERS>
+                                    <KAFKA_CONTROLLER_LISTENER_NAMES>CONTROLLER</KAFKA_CONTROLLER_LISTENER_NAMES>
+                                    <KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR>1</KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR>
+                                    <KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR>1</KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR>
+                                    <KAFKA_TRANSACTION_STATE_LOG_MIN_ISR>1</KAFKA_TRANSACTION_STATE_LOG_MIN_ISR>
+                                    <CLUSTER_ID>ciWo7IWazngRchmPES6q5A==</CLUSTER_ID>
+                                    <KAFKA_INTER_BROKER_LISTENER_NAME>INTERNAL</KAFKA_INTER_BROKER_LISTENER_NAME>
+                                    <KAFKA_LISTENER_SECURITY_PROTOCOL_MAP>INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT</KAFKA_LISTENER_SECURITY_PROTOCOL_MAP>
+                                </env>
+                                <wait>
+                                    <log>Kafka Server started</log>
+                                    <time>120000</time>
+                                </wait>
+                            </run>
+                        </image>
+                        <image>
+                            <name>milvusdb/milvus:v2.5.4</name>
+                            <alias>milvus</alias>
+                            <run>
+                                <network>
+                                    <mode>custom</mode>
+                                    <name>milvus-it-net</name>
+                                    <alias>milvus</alias>
+                                </network>
+                                <ports>
+                                    <port>19530:19530</port>
+                                    <port>9091:9091</port>
+                                </ports>
+                                <env>
+                                    <ETCD_ENDPOINTS>http://etcd:2379</ETCD_ENDPOINTS>
+                                    <MINIO_ADDRESS>minio:9000</MINIO_ADDRESS>
+                                    <KAFKA_BROKERLIST>kafka:19092</KAFKA_BROKERLIST>
+                                </env>
+                                <volumes>
+                                    <bind>
+                                        <volume>${project.basedir}/src/test/resources/milvus-it-user.yaml:/milvus/configs/user.yaml:ro</volume>
+                                    </bind>
+                                </volumes>
+                                <cmd>milvus run standalone</cmd>
+                                <securityOpts>
+                                    <securityOpt>seccomp:unconfined</securityOpt>
+                                </securityOpts>
+                                <wait>
+                                    <http>
+                                        <url>http://localhost:9091/healthz</url>
+                                        <method>GET</method>
+                                        <status>200</status>
+                                    </http>
+                                    <time>300000</time>
+                                </wait>
+                                <dependsOn>
+                                    <container>etcd</container>
+                                    <container>minio</container>
+                                    <container>kafka</container>
+                                </dependsOn>
+                            </run>
+                        </image>
+
+                    </images>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>start</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>start</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>stop</id>
+                        <phase>post-integration-test</phase>
+                        <goals>
+                            <goal>stop</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
         </plugins>
 
         <resources>
-            <!-- Apply the properties set in the POM to the resource files -->
             <resource>
                 <filtering>true</filtering>
                 <directory>src/main/resources</directory>
@@ -288,22 +561,6 @@
                     <name>apicurio</name>
                 </property>
             </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-failsafe-plugin</artifactId>
-                        <configuration>
-                            <systemPropertyVariables>
-                                <use.apicurio>true</use.apicurio>
-                            </systemPropertyVariables>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-            <properties>
-                <docker.filter>${docker.dbs},${apicurio.image}:${version.apicurio}</docker.filter>
-            </properties>
         </profile>
     </profiles>
 </project>

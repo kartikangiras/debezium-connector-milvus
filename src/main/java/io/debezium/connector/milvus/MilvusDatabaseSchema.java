@@ -50,6 +50,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
     private final Set<TableId> registeredTableIds = new HashSet<>();
     private final Map<TableId, String[]> registeredColumnNames = new HashMap<>();
     private final Map<TableId, String> registeredPkFields = new HashMap<>();
+    private final io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient;
 
     public MilvusDatabaseSchema(RelationalDatabaseConnectorConfig config,
                                 TopicNamingStrategy<TableId> topicNamingStrategy,
@@ -59,12 +60,32 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                                 boolean tableIdCaseInsensitive,
                                 Key.KeyMapper keyMapper,
                                 CdcSourceTaskContext<?> context) {
+        this(config, topicNamingStrategy, tableFilter, columnFilter,
+                tableSchemaBuilder, tableIdCaseInsensitive, keyMapper, context, null);
+    }
+
+    public MilvusDatabaseSchema(RelationalDatabaseConnectorConfig config,
+                                TopicNamingStrategy<TableId> topicNamingStrategy,
+                                Tables.TableFilter tableFilter,
+                                Tables.ColumnNameFilter columnFilter,
+                                TableSchemaBuilder tableSchemaBuilder,
+                                boolean tableIdCaseInsensitive,
+                                Key.KeyMapper keyMapper,
+                                CdcSourceTaskContext<?> context,
+                                io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient) {
         super(config, topicNamingStrategy, tableFilter, columnFilter,
                 tableSchemaBuilder, tableIdCaseInsensitive, keyMapper, context);
+        this.metadataClient = metadataClient;
     }
 
     public static MilvusDatabaseSchema create(MilvusConnectorConfig connectorConfig,
                                               CdcSourceTaskContext<?> taskContext) {
+        return create(connectorConfig, taskContext, null);
+    }
+
+    public static MilvusDatabaseSchema create(MilvusConnectorConfig connectorConfig,
+                                              CdcSourceTaskContext<?> taskContext,
+                                              io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient) {
         TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig
                 .getTopicNamingStrategy(CommonConnectorConfig.TOPIC_NAMING_STRATEGY);
         Tables.TableFilter tableFilter = Tables.TableFilter.includeAll();
@@ -90,7 +111,8 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                 tableSchemaBuilder,
                 false,
                 table -> table.primaryKeyColumns(),
-                taskContext);
+                taskContext,
+                metadataClient);
     }
 
     /**
@@ -119,7 +141,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
             return false;
         }
 
-        String pkFieldName = fieldNames.get(0);
+        String pkFieldName = resolvePrimaryKeyField(collectionName, fieldNames);
         int position = 1;
 
         TableEditor tableEditor = Table.editor().tableId(tableId);
@@ -156,6 +178,23 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
         LOGGER.info("Registered collection schema: tableId={}, columns={}, pk={}",
                 tableId, fieldNames, pkFieldName);
         return true;
+    }
+
+    private String resolvePrimaryKeyField(String collectionName, List<String> fieldNames) {
+        if (metadataClient != null) {
+            try {
+                io.debezium.connector.milvus.metadata.MilvusCollectionSchema schema = metadataClient.schema(collectionName);
+                String pk = schema.getPrimaryKeyField();
+                if (pk != null && !pk.isBlank() && fieldNames.contains(pk)) {
+                    return pk;
+                }
+            }
+            catch (Exception e) {
+                LOGGER.warn("Failed to resolve primary key for collection {} from Milvus metadata; "
+                        + "falling back to first field. Reason: {}", collectionName, e.getMessage());
+            }
+        }
+        return fieldNames.get(0);
     }
 
     /**
