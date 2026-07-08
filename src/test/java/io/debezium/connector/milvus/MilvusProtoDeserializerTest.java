@@ -75,11 +75,17 @@ public class MilvusProtoDeserializerTest {
         assertThat(first.getVchannel()).isEqualTo("books_v0");
         assertThat(first.getTso()).isEqualTo(123L);
         assertThat(first.getData()).containsEntry("id", 1L).containsEntry("title", "Dune");
-        assertThat((float[]) first.getData().get("embedding")).containsExactly(1.0f, 2.0f);
+        assertThat(first.getData().get("embedding")).isInstanceOf(java.util.List.class);
+        @SuppressWarnings("unchecked")
+        java.util.List<Float> firstEmbedding = (java.util.List<Float>) first.getData().get("embedding");
+        assertThat(firstEmbedding).containsExactly(1.0f, 2.0f);
 
         MilvusChangeEvent.Insert second = (MilvusChangeEvent.Insert) events.get(1);
         assertThat(second.getData()).containsEntry("id", 2L).containsEntry("title", "Hyperion");
-        assertThat((float[]) second.getData().get("embedding")).containsExactly(3.0f, 4.0f);
+        assertThat(second.getData().get("embedding")).isInstanceOf(java.util.List.class);
+        @SuppressWarnings("unchecked")
+        java.util.List<Float> secondEmbedding = (java.util.List<Float>) second.getData().get("embedding");
+        assertThat(secondEmbedding).containsExactly(3.0f, 4.0f);
     }
 
     @Test

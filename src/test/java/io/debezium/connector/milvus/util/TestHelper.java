@@ -24,7 +24,7 @@ import io.milvus.v2.client.MilvusClientV2;
 
 public final class TestHelper {
 
-    public static final String TOPIC_PREFIX = "milvus-test";
+    public static final String TOPIC_PREFIX = "milvus_test";
     public static final int PARTITION = 0;
 
     private TestHelper() {
@@ -46,6 +46,7 @@ public final class TestHelper {
     public static Configuration defaultConfig(String bootstrapServers) {
         Map<String, String> props = new HashMap<>();
         props.put("milvus.uri", MilvusTestContainer.milvusUri());
+        props.put("milvus.token", "root:Milvus");
         props.put("topic.prefix", TOPIC_PREFIX);
         props.put("milvus.kafka.bootstrap.servers", Objects.requireNonNull(bootstrapServers));
         props.put("milvus.kafka.consumer.group.id",
