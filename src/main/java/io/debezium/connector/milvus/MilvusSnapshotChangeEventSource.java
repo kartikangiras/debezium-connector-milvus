@@ -42,7 +42,9 @@ public class MilvusSnapshotChangeEventSource
             throws Exception {
         // TODO: Implement actual snapshot query logic via Milvus SDK with guarantee_ts.
         // For now, mark snapshot as completed so streaming can proceed.
-        return SnapshotResult.completed(offsetContext);
+        MilvusOffsetContext effectiveOffsetContext = offsetContext != null ? offsetContext
+                : new MilvusOffsetContext(new MilvusSourceInfo(connectorConfig));
+        return SnapshotResult.completed(effectiveOffsetContext);
     }
 
     @Override

@@ -51,6 +51,7 @@ import io.debezium.DebeziumException;
  * </p>
  * <ul>
  * <li>{@link SeekPosition#EARLIEST} — seek to the beginning of each topic</li>
+ * <li>{@link SeekPosition#LATEST} — seek to the end of each topic</li>
  * <li>{@link SeekPosition#STORED_OFFSET_PLUS_ONE} — seek to stored offset +
  * 1</li>
  * <li>{@link SeekPosition#DEFAULT} — use the provided checkpoint offsets,
@@ -177,6 +178,11 @@ public class KafkaMilvusMessageConsumer implements MilvusMessageConsumer {
             case EARLIEST:
                 kafkaConsumer.seekToBeginning(partitions);
                 LOGGER.info("Seeked to earliest for all assigned partitions");
+                break;
+
+            case LATEST:
+                kafkaConsumer.seekToEnd(partitions);
+                LOGGER.info("Seeked to latest for all assigned partitions");
                 break;
 
             case STORED_OFFSET_PLUS_ONE:
