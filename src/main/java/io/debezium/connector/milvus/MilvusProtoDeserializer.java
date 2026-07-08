@@ -8,6 +8,7 @@ package io.debezium.connector.milvus;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -177,8 +178,11 @@ public class MilvusProtoDeserializer {
         String vchannel = Strings.defaultIfEmpty(ins.getShardName(), pchannel);
 
         List<MilvusFieldData> columns = new ArrayList<>();
+        Map<String, DataType> fieldTypes = new LinkedHashMap<>();
         for (FieldData fd : ins.getFieldsDataList()) {
-            columns.add(toFieldData(fd));
+            MilvusFieldData col = toFieldData(fd);
+            columns.add(col);
+            fieldTypes.put(col.getFieldName(), col.getDataType());
         }
         long numRows = ins.getNumRows();
         if (numRows == 0 && !Collect.isNullOrEmpty(columns)) {
@@ -190,7 +194,7 @@ public class MilvusProtoDeserializer {
 
         List<MilvusChangeEvent> events = new ArrayList<>(rows.size());
         for (Map<String, Object> row : rows) {
-            events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row));
+            events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row, fieldTypes));
         }
         return events;
     }

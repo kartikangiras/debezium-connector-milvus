@@ -7,6 +7,8 @@ package io.debezium.connector.milvus;
 
 import java.util.Map;
 
+import io.milvus.grpc.DataType;
+
 /**
  * Sealed hierarchy representing a single change event from Milvus.
  *
@@ -55,15 +57,31 @@ public sealed class MilvusChangeEvent {
      */
     public static final class Insert extends MilvusChangeEvent {
         private final Map<String, Object> data;
+        /** Per-field Milvus DataType, keyed by field name. */
+        private final Map<String, DataType> fieldTypes;
 
         public Insert(String collectionName, String pchannel, String vchannel, long tso,
                       Map<String, Object> data) {
+            this(collectionName, pchannel, vchannel, tso, data, Map.of());
+        }
+
+        public Insert(String collectionName, String pchannel, String vchannel, long tso,
+                      Map<String, Object> data, Map<String, DataType> fieldTypes) {
             super(collectionName, pchannel, vchannel, tso);
             this.data = data;
+            this.fieldTypes = fieldTypes != null ? fieldTypes : Map.of();
         }
 
         public Map<String, Object> getData() {
             return data;
+        }
+
+        /**
+         * Returns the per-field Milvus {@link DataType}, keyed by field name.
+         * Never null; may be empty if type information was not available at parse time.
+         */
+        public Map<String, DataType> getFieldTypes() {
+            return fieldTypes;
         }
     }
 

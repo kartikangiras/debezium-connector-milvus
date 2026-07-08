@@ -75,6 +75,11 @@ public class MilvusStreamingChangeEventSource
 
         LOGGER.info("Starting Milvus streaming change event source for partition {}", partition);
 
+        if (offsetContext == null) {
+            LOGGER.warn("No offset context provided to streaming source; initializing a fresh offset context");
+            offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(connectorConfig));
+        }
+
         String pchannel = partition.getPchannel();
         int partitionIndex = connectorConfig.getKafkaPartitionIndex();
         TopicPartition tp = new TopicPartition(pchannel, partitionIndex);
@@ -218,7 +223,8 @@ public class MilvusStreamingChangeEventSource
             if (!databaseSchema.isCollectionRegistered(tableId)) {
                 if (event instanceof MilvusChangeEvent.Insert insert && insert.getData() != null
                         && !insert.getData().isEmpty()) {
-                    databaseSchema.registerCollection(dbName, collectionName, insert.getData());
+                    databaseSchema.registerCollection(dbName, collectionName,
+                            insert.getData(), insert.getFieldTypes());
                 }
                 else {
                     LOGGER.debug("Skipping event for unregistered collection {}: type={}",
@@ -235,7 +241,7 @@ public class MilvusStreamingChangeEventSource
             String[] columnNames = databaseSchema.getColumnNames(tableId);
             String pkFieldName = databaseSchema.getPkFieldName(tableId);
 
-            offsetContext.updateForEvent(collectionName,
+            offsetContext.updateForEvent(dbName, collectionName,
                     event.getPchannel(), event.getVchannel(), event.getTso());
 
             MilvusChangeRecordEmitter emitter = new MilvusChangeRecordEmitter(
@@ -294,6 +300,15 @@ public class MilvusStreamingChangeEventSource
 
     /**
      * Seek the consumer to the appropriate starting position.
+     *
+     * <p>
+     * Mirrors the behaviour of Postgres {@code NO_DATA} and Oracle
+     * {@code NO_DATA} snapshot modes: when there is no stored offset and no
+     * snapshot checkpoint to resume from, the consumer seeks to the
+     * <em>end</em> of the pchannel (i.e. "now") rather than the beginning.
+     * Replaying the entire history is rarely useful and would re-deliver
+     * stale events from prior connector runs or test setup.
+     * </p>
      */
     private void seekConsumer(String pchannel, TopicPartition tp,
                               MilvusOffsetContext offsetContext) {
@@ -312,14 +327,14 @@ public class MilvusStreamingChangeEventSource
             }
             else {
                 LOGGER.warn(
-                        "No checkpoint offset available for snapshot handoff on pchannel {}, falling back to EARLIEST",
+                        "No checkpoint offset available for snapshot handoff on pchannel {}, falling back to LATEST",
                         pchannel);
-                messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.EARLIEST, null);
+                messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.LATEST, null);
             }
         }
         else {
-            messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.EARLIEST, null);
-            LOGGER.info("No stored offset, seeking to earliest");
+            messageConsumer.assignAndSeek(Set.of(pchannel), SeekPosition.LATEST, null);
+            LOGGER.info("No stored offset, seeking to latest");
         }
     }
 

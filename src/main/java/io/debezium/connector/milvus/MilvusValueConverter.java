@@ -16,6 +16,8 @@ import org.slf4j.LoggerFactory;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.ProtocolMessageEnum;
 
+import io.debezium.data.Json;
+import io.debezium.data.vector.FloatVector;
 import io.debezium.relational.Column;
 import io.debezium.relational.ValueConverter;
 import io.debezium.relational.ValueConverterProvider;
@@ -43,27 +45,33 @@ import io.milvus.grpc.DataType;
  * </ul>
  *
  * <p>
- * <b>DataType → Java type mapping</b> (verified against
- * {@code io.milvus.grpc.DataType} in milvus-sdk-java 2.6.0):
+ * <b>Schema/logical type mapping</b> (see {@link #schemaBuilder(Column)}):
  * </p>
  * <ul>
- * <li>{@link DataType#None} — skipped (never appears in data)</li>
- * <li>{@link DataType#Bool} → {@code Boolean}</li>
- * <li>{@link DataType#Int8} / {@link DataType#Int16} → {@code Short}</li>
- * <li>{@link DataType#Int32} → {@code Integer}</li>
- * <li>{@link DataType#Int64} → {@code Long}</li>
- * <li>{@link DataType#Float} → {@code Float}</li>
- * <li>{@link DataType#Double} → {@code Double}</li>
- * <li>{@link DataType#String} / {@link DataType#VarChar} /
- * {@link DataType#Text}
- * / {@link DataType#JSON} / {@link DataType#Geometry} → {@code String}</li>
- * <li>{@link DataType#Array} → {@code List<?>}</li>
- * <li>{@link DataType#BinaryVector} / {@link DataType#Int8Vector} →
- * {@code byte[]}</li>
- * <li>{@link DataType#FloatVector} / {@link DataType#Float16Vector}
- * / {@link DataType#BFloat16Vector} / {@link DataType#SparseFloatVector}
- * → {@code float[]}</li>
+ * <li>{@link DataType#Bool} → {@code Schema.Type.BOOLEAN}</li>
+ * <li>{@link DataType#Int8} / {@link DataType#Int16} → {@code Schema.Type.INT16}</li>
+ * <li>{@link DataType#Int32} → {@code Schema.Type.INT32}</li>
+ * <li>{@link DataType#Int64} → {@code Schema.Type.INT64}</li>
+ * <li>{@link DataType#Float} → {@code Schema.Type.FLOAT32}</li>
+ * <li>{@link DataType#Double} → {@code Schema.Type.FLOAT64}</li>
+ * <li>{@link DataType#String} / {@link DataType#VarChar} / {@link DataType#Text}
+ *     → {@code Schema.Type.STRING}</li>
+ * <li>{@link DataType#JSON} / {@link DataType#Geometry}
+ *     → {@code io.debezium.data.Json} logical type (underlying type STRING)</li>
+ * <li>{@link DataType#FloatVector} → {@code io.debezium.data.vector.FloatVector}
+ *     logical type (underlying type ARRAY of FLOAT32)</li>
+ * <li>{@link DataType#BinaryVector} / {@link DataType#Int8Vector}
+ *     / {@link DataType#Float16Vector} / {@link DataType#BFloat16Vector}
+ *     → {@code bytes} ({@link Types#BLOB})</li>
+ * <li>{@link DataType#SparseFloatVector} → {@code Schema.Type.STRING} (JSON)</li>
  * </ul>
+ *
+ * <p>
+ * <b>Note on wide integers</b>: Milvus {@code Int64} maps to Java {@code Long}
+ * (64-bit signed). Should Milvus ever introduce a wider integer type,
+ * {@code io.debezium.data.VariableScaleDecimal} would be the appropriate
+ * encoding; a comment is left in {@link #schemaBuilder(Column)} as a reminder.
+ * </p>
  */
 public class MilvusValueConverter implements ValueConverter, ValueConverterProvider {
 
@@ -74,6 +82,10 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
     public MilvusValueConverter(MilvusConnectorConfig config) {
         this.config = config;
     }
+
+    // ------------------------------------------------------------------ //
+    // Type-erased convert() //
+    // ------------------------------------------------------------------ //
 
     /**
      * Type-erased normalization. Returns {@code null} for null input, unwraps
@@ -121,6 +133,10 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
         return value.toString();
     }
 
+    // ------------------------------------------------------------------ //
+    // Type-aware convertWithType() //
+    // ------------------------------------------------------------------ //
+
     /**
      * Type-aware conversion using the known Milvus {@link DataType}. This is the
      * primary path for cell-level conversion during the columnar pivot.
@@ -155,6 +171,7 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
             case Text:
             case JSON:
             case Geometry:
+            case SparseFloatVector:
                 return toString(value);
             case Array:
                 return toList(value);
@@ -162,17 +179,92 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
             case Int8Vector:
                 return toByteArray(value);
             case FloatVector:
-                return toFloatArray(value);
+                return toFloatList(value);
             case Float16Vector:
             case BFloat16Vector:
                 return toByteArray(value);
-            case SparseFloatVector:
-                return toString(value);
             case None:
             default:
                 return convert(value);
         }
     }
+
+    // ------------------------------------------------------------------ //
+    // ValueConverterProvider: schema builder //
+    // ------------------------------------------------------------------ //
+
+    @Override
+    public SchemaBuilder schemaBuilder(Column column) {
+        switch (column.jdbcType()) {
+            case Types.BIGINT:
+                // Note: if Milvus ever introduces integers wider than 64-bit,
+                // VariableScaleDecimal would be the appropriate encoding here.
+                return SchemaBuilder.int64();
+            case Types.INTEGER:
+                return SchemaBuilder.int32();
+            case Types.SMALLINT:
+                return SchemaBuilder.int16();
+            case Types.FLOAT:
+            case Types.DOUBLE:
+                return floatingPointSchema(column.jdbcType());
+            case Types.BOOLEAN:
+                return SchemaBuilder.bool();
+            case Types.BLOB:
+                return SchemaBuilder.bytes().optional();
+            case Types.ARRAY:
+                // Generic array (Milvus DataType.Array) — encode as a JSON string
+                // to avoid requiring knowledge of the element type at schema-build time.
+                return SchemaBuilder.string().optional();
+            case Types.OTHER:
+                // JSON / Geometry — annotate with the io.debezium.data.Json logical type
+                return Json.builder().optional();
+            case Types.JAVA_OBJECT:
+                // FloatVector — annotate with io.debezium.data.vector.FloatVector logical type
+                return FloatVector.builder().optional();
+            case Types.VARCHAR:
+            default:
+                return SchemaBuilder.string();
+        }
+    }
+
+    /**
+     * Returns the native Kafka Connect schema for Milvus floating-point columns.
+     * Milvus {@code Float} and {@code Double} are IEEE-754 native types (like
+     * Oracle {@code BINARY_FLOAT} / {@code BINARY_DOUBLE}), not decimal
+     * numerics, so they are always mapped to FLOAT32/FLOAT64 regardless of
+     * {@code decimal.handling.mode}.
+     */
+    private SchemaBuilder floatingPointSchema(int jdbcType) {
+        return jdbcType == Types.FLOAT ? SchemaBuilder.float32().optional() : SchemaBuilder.float64().optional();
+    }
+
+    // ------------------------------------------------------------------ //
+    // ValueConverterProvider: value converter //
+    // ------------------------------------------------------------------ //
+
+    @Override
+    public ValueConverter converter(Column column, Field field) {
+        switch (column.jdbcType()) {
+            case Types.FLOAT:
+                return (value) -> value == null ? null : toFloat(value);
+            case Types.DOUBLE:
+                return (value) -> value == null ? null : toDouble(value);
+            case Types.JAVA_OBJECT:
+                // FloatVector: convert float[] / List<Float> to List<Float>
+                return (value) -> {
+                    if (value == null) {
+                        return null;
+                    }
+                    return toFloatList(value);
+                };
+            default:
+                return this;
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // Private helpers //
+    // ------------------------------------------------------------------ //
 
     private Boolean toBoolean(Object v) {
         if (v instanceof Boolean b) {
@@ -262,6 +354,33 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
                 "Cannot convert " + v.getClass().getName() + " to byte[]");
     }
 
+    /**
+     * Converts a float vector value to a {@code List<Float>} for the
+     * {@link FloatVector} logical type.
+     *
+     * <p>Accepts {@code float[]}, {@code List<?>}, {@link ByteString}, or
+     * {@code byte[]} (little-endian IEEE-754 floats).</p>
+     */
+    private List<Float> toFloatList(Object v) {
+        if (v instanceof float[] floats) {
+            return FloatVector.fromLogical(null, floats);
+        }
+        if (v instanceof List<?> list) {
+            // Already a List<Float> from the columnar pivot path
+            @SuppressWarnings("unchecked")
+            List<Float> floatList = (List<Float>) list;
+            return floatList;
+        }
+        if (v instanceof ByteString bs) {
+            return FloatVector.fromLogical(null, bs.toByteArray());
+        }
+        if (v instanceof byte[] bytes) {
+            return FloatVector.fromLogical(null, bytes);
+        }
+        throw new IllegalArgumentException(
+                "Cannot convert " + v.getClass().getName() + " to List<Float> (FloatVector)");
+    }
+
     private float[] toFloatArray(Object v) {
         if (v instanceof float[] floats) {
             return floats;
@@ -287,31 +406,5 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
         }
         throw new IllegalArgumentException(
                 "Cannot convert " + v.getClass().getName() + " to float[]");
-    }
-
-    @Override
-    public SchemaBuilder schemaBuilder(Column column) {
-        switch (column.jdbcType()) {
-            case Types.BIGINT:
-                return SchemaBuilder.int64();
-            case Types.INTEGER:
-                return SchemaBuilder.int32();
-            case Types.DOUBLE:
-                return SchemaBuilder.float64();
-            case Types.FLOAT:
-                return SchemaBuilder.float32();
-            case Types.BOOLEAN:
-                return SchemaBuilder.bool();
-            case Types.BLOB:
-                return SchemaBuilder.bytes().optional();
-            case Types.VARCHAR:
-            default:
-                return SchemaBuilder.string();
-        }
-    }
-
-    @Override
-    public ValueConverter converter(Column column, Field field) {
-        return this;
     }
 }
