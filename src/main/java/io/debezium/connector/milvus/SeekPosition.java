@@ -13,6 +13,7 @@ package io.debezium.connector.milvus;
  */
 public enum SeekPosition {
     EARLIEST,
+    LATEST,
     STORED_OFFSET_PLUS_ONE,
     DEFAULT
 }

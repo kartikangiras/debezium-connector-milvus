@@ -28,9 +28,11 @@ import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
 import io.debezium.pipeline.metrics.DefaultChangeEventSourceMetricsFactory;
+import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.spi.Offsets;
 import io.debezium.pipeline.spi.Partition;
 import io.debezium.relational.TableId;
+import io.debezium.schema.SchemaFactory;
 import io.debezium.snapshot.SnapshotterService;
 import io.debezium.spi.topic.TopicNamingStrategy;
 import io.debezium.util.LoggingContext;
@@ -122,6 +124,12 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         SnapshotterService snapshotterService = MilvusSnapshotter.createService();
 
+        // Build a NotificationService with no notification channels. This is required by
+        // AbstractSnapshotChangeEventSource even when no channels are configured; passing
+        // null causes a NullPointerException at snapshot notification time.
+        NotificationService<MilvusPartition, MilvusOffsetContext> notificationService = new NotificationService<>(Collections.emptyList(), connectorConfig,
+                SchemaFactory.get(), dispatcher::enqueueNotification);
+
         ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> coordinator = new ChangeEventSourceCoordinator<>(
                 previousOffsets,
                 errorHandler,
@@ -132,7 +140,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
                 dispatcher,
                 schema,
                 null,
-                null,
+                notificationService,
                 snapshotterService);
 
         coordinator.start(taskContext, this.queue, metadataProvider);

@@ -111,9 +111,16 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
 
     /**
      * Update the source info fields for a change event about to be dispatched.
+     *
+     * @param dbName         Milvus database name (populates {@code source.db})
+     * @param collectionName Milvus collection name
+     * @param pchannel       physical channel
+     * @param vchannel       virtual channel
+     * @param tso            timestamp oracle from the event
      */
-    public void updateForEvent(String collectionName, String pchannel,
+    public void updateForEvent(String dbName, String collectionName, String pchannel,
                                String vchannel, long tso) {
+        sourceInfo.setDatabaseName(dbName);
         sourceInfo.setCollectionName(collectionName);
         sourceInfo.setPchannel(pchannel);
         sourceInfo.setVchannel(vchannel);
