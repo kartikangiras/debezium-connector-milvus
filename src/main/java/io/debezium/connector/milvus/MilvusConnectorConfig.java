@@ -20,6 +20,7 @@ import io.debezium.config.Configuration;
 import io.debezium.config.EnumeratedValue;
 import io.debezium.config.Field;
 import io.debezium.connector.SourceInfoStructMaker;
+import io.debezium.jdbc.JdbcValueConverters.DecimalMode;
 import io.debezium.relational.ColumnFilterMode;
 import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.TableId;
@@ -260,6 +261,19 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withDescription("Milvus physical channel (pchannel) topic name. "
                     + "Defaults to 'by-dev-rootcoord-dml_0'.");
 
+    /**
+     * Override the parent's {@code decimal.handling.mode} field to change the default
+     * from {@code precise} to {@code double}.
+     *
+     * <p>Milvus {@code Float} and {@code Double} fields are IEEE-754 floating-point
+     * values — not SQL DECIMAL/NUMERIC. Using {@code precise} (BigDecimal/bytes) as
+     * the default would silently break consumers that expect native Java floats.
+     * Users who truly need lossless decimal encoding can still set
+     * {@code decimal.handling.mode=precise} explicitly.</p>
+     */
+    public static final Field DECIMAL_HANDLING_MODE_FIELD = RelationalDatabaseConnectorConfig.DECIMAL_HANDLING_MODE
+            .withDefault(DecimalHandlingMode.DOUBLE.getValue());
+
     private final String milvusUri;
     private final String milvusToken;
     private final String milvusDatabase;
@@ -433,6 +447,14 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     @Override
     public Optional<EnumeratedValue> getSnapshotLockingMode() {
         return Optional.empty();
+    }
+
+    @Override
+    public DecimalMode getDecimalMode() {
+        return DecimalHandlingMode
+                .parse(this.getConfig().getString(DECIMAL_HANDLING_MODE_FIELD),
+                        DecimalHandlingMode.DOUBLE.getValue())
+                .asDecimalMode();
     }
 
     @Override
