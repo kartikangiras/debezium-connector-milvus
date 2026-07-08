@@ -77,8 +77,15 @@ public class MilvusColumnarPivotTest {
         List<Map<String, Object>> rows = pivot.pivot(List.of(vec), 2);
 
         assertThat(rows).hasSize(2);
-        assertThat((float[]) rows.get(0).get("vector")).containsExactly(0.1f, 0.2f);
-        assertThat((float[]) rows.get(1).get("vector")).containsExactly(0.3f, 0.4f);
+        // FloatVector is now encoded as List<Float> for io.debezium.data.vector.FloatVector
+        assertThat(rows.get(0).get("vector")).isInstanceOf(List.class);
+        assertThat(rows.get(1).get("vector")).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<Float> vec0 = (List<Float>) rows.get(0).get("vector");
+        @SuppressWarnings("unchecked")
+        List<Float> vec1 = (List<Float>) rows.get(1).get("vector");
+        assertThat(vec0).containsExactly(0.1f, 0.2f);
+        assertThat(vec1).containsExactly(0.3f, 0.4f);
     }
 
     @Test

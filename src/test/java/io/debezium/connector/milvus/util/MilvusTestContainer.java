@@ -23,12 +23,10 @@ public final class MilvusTestContainer {
 
     /** No-op: containers are started by the docker-maven-plugin. */
     public static synchronized void startAll() {
-        // Containers are managed by io.fabric8:docker-maven-plugin (pre-integration-test phase).
     }
 
     /** No-op: containers are stopped by the docker-maven-plugin. */
     public static synchronized void stopAll() {
-        // Containers are managed by io.fabric8:docker-maven-plugin (post-integration-test phase).
     }
 
     /**

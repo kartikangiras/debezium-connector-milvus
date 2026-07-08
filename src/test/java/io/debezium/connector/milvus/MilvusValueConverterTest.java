@@ -7,18 +7,46 @@ package io.debezium.connector.milvus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.sql.Types;
+import java.util.Arrays;
 import java.util.List;
 
+import org.apache.kafka.connect.data.Schema;
 import org.junit.jupiter.api.Test;
 
 import com.google.protobuf.ByteString;
 
+import io.debezium.config.Configuration;
+import io.debezium.data.Json;
+import io.debezium.data.vector.FloatVector;
 import io.debezium.doc.FixFor;
+import io.debezium.relational.Column;
 import io.milvus.grpc.DataType;
 
 public class MilvusValueConverterTest {
 
+    /** Converter without config — uses DOUBLE mode defaults. */
     private final MilvusValueConverter converter = new MilvusValueConverter(null);
+
+    /** Build a converter with the specified decimal.handling.mode. */
+    private static MilvusValueConverter converterWithMode(String mode) {
+        Configuration cfg = Configuration.create()
+                .with("milvus.uri", "http://localhost:19530")
+                .with("topic.prefix", "test")
+                .with("decimal.handling.mode", mode)
+                .build();
+        return new MilvusValueConverter(new MilvusConnectorConfig(cfg));
+    }
+
+    /** Helper: build a Column with the given jdbcType. */
+    private static Column columnOf(int jdbcType) {
+        return Column.editor()
+                .name("col")
+                .type("T")
+                .jdbcType(jdbcType)
+                .optional(true)
+                .create();
+    }
 
     // ---- type-erased convert() passthrough ----
 
@@ -152,10 +180,16 @@ public class MilvusValueConverterTest {
 
     @Test
     @FixFor("debezium/dbz#2089")
-    void shouldConvertFloatVectorByteStringToFloatArray() {
-        byte[] raw = java.nio.ByteBuffer.allocate(8).putFloat(1.0f).putFloat(2.0f).array();
-        float[] result = (float[]) converter.convertWithType(ByteString.copyFrom(raw), DataType.FloatVector);
-        assertThat(result).containsExactly(1.0f, 2.0f);
+    void shouldConvertFloatVectorByteStringToListOfFloat() {
+        // FloatVector.fromLogical reads little-endian IEEE-754 floats
+        byte[] raw = java.nio.ByteBuffer.allocate(8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .putFloat(1.0f).putFloat(2.0f).array();
+        Object result = converter.convertWithType(ByteString.copyFrom(raw), DataType.FloatVector);
+        assertThat(result).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<Float> floatList = (List<Float>) result;
+        assertThat(floatList).containsExactly(1.0f, 2.0f);
     }
 
     @Test
@@ -183,5 +217,82 @@ public class MilvusValueConverterTest {
     @FixFor("debezium/dbz#2089")
     void shouldFallbackOnUnknownDataType() {
         assertThat(converter.convertWithType(99, DataType.None)).isEqualTo(99);
+    }
+
+    // ---- schemaBuilder: JSON → io.debezium.data.Json logical type ----
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnJsonLogicalTypeForOtherJdbcType() {
+        Schema schema = converter.schemaBuilder(columnOf(Types.OTHER)).optional().build();
+        assertThat(schema.name()).isEqualTo(Json.LOGICAL_NAME);
+        assertThat(schema.type()).isEqualTo(Schema.Type.STRING);
+    }
+
+    // ---- schemaBuilder: FloatVector → io.debezium.data.vector.FloatVector logical type ----
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnFloatVectorLogicalTypeForJavaObjectJdbcType() {
+        Schema schema = converter.schemaBuilder(columnOf(Types.JAVA_OBJECT)).optional().build();
+        assertThat(schema.name()).isEqualTo(FloatVector.LOGICAL_NAME);
+    }
+
+    // ---- schemaBuilder: decimal.handling.mode for float/double ----
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnFloat32ForFloatInDoubleMode() {
+        MilvusValueConverter c = converterWithMode("double");
+        Schema schema = c.schemaBuilder(columnOf(Types.FLOAT)).build();
+        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT32);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnFloat64ForDoubleInDoubleMode() {
+        MilvusValueConverter c = converterWithMode("double");
+        Schema schema = c.schemaBuilder(columnOf(Types.DOUBLE)).build();
+        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT64);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnFloat32ForFloatInStringMode() {
+        MilvusValueConverter c = converterWithMode("string");
+        Schema schema = c.schemaBuilder(columnOf(Types.FLOAT)).build();
+        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT32);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnFloat32ForFloatInPreciseMode() {
+        MilvusValueConverter c = converterWithMode("precise");
+        Schema schema = c.schemaBuilder(columnOf(Types.FLOAT)).build();
+        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT32);
+    }
+
+    // ---- convertWithType: FloatVector → List<Float> ----
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void shouldConvertFloatListToListOfFloat() {
+        List<Float> input = Arrays.asList(1.0f, 2.0f, 3.0f);
+        Object result = converter.convertWithType(input, DataType.FloatVector);
+        assertThat(result).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<Float> floatList = (List<Float>) result;
+        assertThat(floatList).containsExactly(1.0f, 2.0f, 3.0f);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void shouldConvertFloatArrayToListOfFloat() {
+        float[] raw = { 1.5f, 2.5f };
+        Object result = converter.convertWithType(raw, DataType.FloatVector);
+        assertThat(result).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<Float> floatList = (List<Float>) result;
+        assertThat(floatList).containsExactly(1.5f, 2.5f);
     }
 }

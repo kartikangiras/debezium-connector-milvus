@@ -66,7 +66,7 @@ public class MilvusStreamingChangeEventSourceTest {
         schema = mock(MilvusDatabaseSchema.class);
 
         when(schema.isCollectionRegistered(any(TableId.class))).thenReturn(false);
-        when(schema.registerCollection(anyString(), anyString(), anyMap())).thenReturn(true);
+        when(schema.registerCollection(anyString(), anyString(), anyMap(), anyMap())).thenReturn(true);
         when(schema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id" });
         when(schema.getPkFieldName(any(TableId.class))).thenReturn("id");
 
@@ -168,7 +168,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldSeekToEarliestWhenSnapshotCompletedAndNoStoredOffset() throws Exception {
+    void shouldSeekToLatestWhenSnapshotCompletedAndNoStoredOffset() throws Exception {
         offsetContext.postSnapshotCompletion();
 
         when(context.isRunning()).thenReturn(true, false);
@@ -178,13 +178,13 @@ public class MilvusStreamingChangeEventSourceTest {
 
         verify(messageConsumer).assignAndSeek(
                 Set.of(TOPIC),
-                SeekPosition.EARLIEST,
+                SeekPosition.LATEST,
                 null);
     }
 
     @Test
     @FixFor("debezium/dbz#2068")
-    void shouldFallbackToEarliestForSnapshotHandoffWhenNoCheckpoint() throws Exception {
+    void shouldFallbackToLatestForSnapshotHandoffWhenNoCheckpoint() throws Exception {
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
 
@@ -192,7 +192,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
         verify(messageConsumer).assignAndSeek(
                 Set.of(TOPIC),
-                SeekPosition.EARLIEST,
+                SeekPosition.LATEST,
                 null);
     }
 
@@ -245,7 +245,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
         source.execute(context, partition, offsetContext);
 
-        verify(schema).registerCollection("default", "test_collection", data);
+        verify(schema).registerCollection("default", "test_collection", data, Map.of());
 
         verify(dispatcher).dispatchDataChangeEvent(
                 any(MilvusPartition.class),
