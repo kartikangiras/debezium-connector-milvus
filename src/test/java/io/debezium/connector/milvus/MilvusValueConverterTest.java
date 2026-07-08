@@ -11,6 +11,7 @@ import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 
+import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.jupiter.api.Test;
 
@@ -258,18 +259,36 @@ public class MilvusValueConverterTest {
 
     @Test
     @FixFor("debezium/dbz#2089")
-    void schemaBuilderShouldReturnFloat32ForFloatInStringMode() {
+    void schemaBuilderShouldReturnStringForFloatInStringMode() {
         MilvusValueConverter c = converterWithMode("string");
         Schema schema = c.schemaBuilder(columnOf(Types.FLOAT)).build();
-        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT32);
+        assertThat(schema.type()).isEqualTo(Schema.Type.STRING);
     }
 
     @Test
     @FixFor("debezium/dbz#2089")
-    void schemaBuilderShouldReturnFloat32ForFloatInPreciseMode() {
+    void schemaBuilderShouldReturnDecimalForFloatInPreciseMode() {
         MilvusValueConverter c = converterWithMode("precise");
         Schema schema = c.schemaBuilder(columnOf(Types.FLOAT)).build();
-        assertThat(schema.type()).isEqualTo(Schema.Type.FLOAT32);
+        assertThat(schema.name()).isEqualTo(Decimal.LOGICAL_NAME);
+        assertThat(schema.type()).isEqualTo(Schema.Type.BYTES);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnStringForDoubleInStringMode() {
+        MilvusValueConverter c = converterWithMode("string");
+        Schema schema = c.schemaBuilder(columnOf(Types.DOUBLE)).build();
+        assertThat(schema.type()).isEqualTo(Schema.Type.STRING);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2089")
+    void schemaBuilderShouldReturnDecimalForDoubleInPreciseMode() {
+        MilvusValueConverter c = converterWithMode("precise");
+        Schema schema = c.schemaBuilder(columnOf(Types.DOUBLE)).build();
+        assertThat(schema.name()).isEqualTo(Decimal.LOGICAL_NAME);
+        assertThat(schema.type()).isEqualTo(Schema.Type.BYTES);
     }
 
     // ---- convertWithType: FloatVector → List<Float> ----

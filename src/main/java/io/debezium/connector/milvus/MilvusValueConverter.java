@@ -5,9 +5,11 @@
  */
 package io.debezium.connector.milvus;
 
+import java.math.BigDecimal;
 import java.sql.Types;
 import java.util.List;
 
+import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.slf4j.Logger;
@@ -18,6 +20,7 @@ import com.google.protobuf.ProtocolMessageEnum;
 
 import io.debezium.data.Json;
 import io.debezium.data.vector.FloatVector;
+import io.debezium.jdbc.JdbcValueConverters.DecimalMode;
 import io.debezium.relational.Column;
 import io.debezium.relational.ValueConverter;
 import io.debezium.relational.ValueConverterProvider;
@@ -52,8 +55,16 @@ import io.milvus.grpc.DataType;
  * <li>{@link DataType#Int8} / {@link DataType#Int16} → {@code Schema.Type.INT16}</li>
  * <li>{@link DataType#Int32} → {@code Schema.Type.INT32}</li>
  * <li>{@link DataType#Int64} → {@code Schema.Type.INT64}</li>
- * <li>{@link DataType#Float} → {@code Schema.Type.FLOAT32}</li>
- * <li>{@link DataType#Double} → {@code Schema.Type.FLOAT64}</li>
+ * <li>{@link DataType#Float} / {@link DataType#Double} → controlled by
+ *     {@code decimal.handling.mode}:
+ *     <ul>
+ *     <li>{@code double} (default) → {@code Schema.Type.FLOAT32} /
+ *         {@code Schema.Type.FLOAT64}</li>
+ *     <li>{@code precise} → {@code org.apache.kafka.connect.data.Decimal}
+ *         logical type (underlying type {@code BYTES})</li>
+ *     <li>{@code string} → {@code Schema.Type.STRING}</li>
+ *     </ul>
+ * </li>
  * <li>{@link DataType#String} / {@link DataType#VarChar} / {@link DataType#Text}
  *     → {@code Schema.Type.STRING}</li>
  * <li>{@link DataType#JSON} / {@link DataType#Geometry}
@@ -78,9 +89,13 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusValueConverter.class);
 
     private final MilvusConnectorConfig config;
+    private final DecimalMode decimalMode;
 
     public MilvusValueConverter(MilvusConnectorConfig config) {
         this.config = config;
+        this.decimalMode = config != null
+                ? config.getDecimalMode()
+                : DecimalMode.DOUBLE;
     }
 
     // ------------------------------------------------------------------ //
@@ -189,10 +204,6 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
         }
     }
 
-    // ------------------------------------------------------------------ //
-    // ValueConverterProvider: schema builder //
-    // ------------------------------------------------------------------ //
-
     @Override
     public SchemaBuilder schemaBuilder(Column column) {
         switch (column.jdbcType()) {
@@ -206,7 +217,7 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
                 return SchemaBuilder.int16();
             case Types.FLOAT:
             case Types.DOUBLE:
-                return floatingPointSchema(column.jdbcType());
+                return floatingPointSchema(decimalMode, column.jdbcType());
             case Types.BOOLEAN:
                 return SchemaBuilder.bool();
             case Types.BLOB:
@@ -228,26 +239,59 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
     }
 
     /**
-     * Returns the native Kafka Connect schema for Milvus floating-point columns.
-     * Milvus {@code Float} and {@code Double} are IEEE-754 native types (like
-     * Oracle {@code BINARY_FLOAT} / {@code BINARY_DOUBLE}), not decimal
-     * numerics, so they are always mapped to FLOAT32/FLOAT64 regardless of
-     * {@code decimal.handling.mode}.
+     * Returns the Kafka Connect schema for Milvus floating-point columns
+     * according to the configured {@code decimal.handling.mode}.
+     *
+     * <ul>
+     * <li>{@code double} — native IEEE-754 types ({@code FLOAT32} /
+     * {@code FLOAT64}).</li>
+     * <li>{@code precise} — {@link Decimal} logical type.</li>
+     * <li>{@code string} — plain {@code STRING}.</li>
+     * </ul>
      */
-    private SchemaBuilder floatingPointSchema(int jdbcType) {
-        return jdbcType == Types.FLOAT ? SchemaBuilder.float32().optional() : SchemaBuilder.float64().optional();
+    private SchemaBuilder floatingPointSchema(DecimalMode mode, int jdbcType) {
+        switch (mode) {
+            case PRECISE:
+                int scale = jdbcType == Types.FLOAT ? 7 : 15;
+                return Decimal.builder(scale).optional();
+            case STRING:
+                return SchemaBuilder.string().optional();
+            case DOUBLE:
+            default:
+                return jdbcType == Types.FLOAT
+                        ? SchemaBuilder.float32().optional()
+                        : SchemaBuilder.float64().optional();
+        }
     }
-
-    // ------------------------------------------------------------------ //
-    // ValueConverterProvider: value converter //
-    // ------------------------------------------------------------------ //
 
     @Override
     public ValueConverter converter(Column column, Field field) {
         switch (column.jdbcType()) {
             case Types.FLOAT:
+                if (decimalMode == DecimalMode.STRING) {
+                    return (value) -> value == null ? null : toString(value);
+                }
+                if (decimalMode == DecimalMode.PRECISE) {
+                    return (value) -> {
+                        if (value == null) {
+                            return null;
+                        }
+                        return Decimal.fromLogical(field.schema(), toBigDecimal(value));
+                    };
+                }
                 return (value) -> value == null ? null : toFloat(value);
             case Types.DOUBLE:
+                if (decimalMode == DecimalMode.STRING) {
+                    return (value) -> value == null ? null : toString(value);
+                }
+                if (decimalMode == DecimalMode.PRECISE) {
+                    return (value) -> {
+                        if (value == null) {
+                            return null;
+                        }
+                        return Decimal.fromLogical(field.schema(), toBigDecimal(value));
+                    };
+                }
                 return (value) -> value == null ? null : toDouble(value);
             case Types.JAVA_OBJECT:
                 // FloatVector: convert float[] / List<Float> to List<Float>
@@ -261,10 +305,6 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
                 return this;
         }
     }
-
-    // ------------------------------------------------------------------ //
-    // Private helpers //
-    // ------------------------------------------------------------------ //
 
     private Boolean toBoolean(Object v) {
         if (v instanceof Boolean b) {
@@ -379,6 +419,16 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
         }
         throw new IllegalArgumentException(
                 "Cannot convert " + v.getClass().getName() + " to List<Float> (FloatVector)");
+    }
+
+    private BigDecimal toBigDecimal(Object v) {
+        if (v instanceof BigDecimal bd) {
+            return bd;
+        }
+        if (v instanceof Number n) {
+            return BigDecimal.valueOf(n.doubleValue());
+        }
+        return new BigDecimal(v.toString());
     }
 
     private float[] toFloatArray(Object v) {
