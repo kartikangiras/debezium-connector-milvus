@@ -34,6 +34,7 @@ import io.debezium.schema.FieldNameSelector;
 import io.debezium.schema.SchemaFactory;
 import io.debezium.schema.SchemaNameAdjuster;
 import io.debezium.spi.topic.TopicNamingStrategy;
+import io.milvus.grpc.DataType;
 
 /**
  * Database schema for Milvus collections.
@@ -119,37 +120,51 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
      * Dynamically register a Milvus collection as a relational table.
      *
      * <p>Uses the first Insert event's data map to infer column names
-     * and JDBC types. The first field in the data map is treated as
-     * the primary key (Milvus convention).</p>
+     * and JDBC types. When {@code fieldTypes} is provided (non-null, non-empty),
+     * the Milvus {@link DataType} is used for accurate JDBC type assignment;
+     * otherwise the method falls back to inferring the JDBC type from the Java
+     * runtime type of the sample value.</p>
      *
      * @param dbName         Milvus database name
      * @param collectionName Milvus collection name
      * @param sampleData     data map from the first Insert event (used to infer types)
+     * @param fieldTypes     per-field Milvus DataType; may be null or empty
      * @return {@code true} if newly registered, {@code false} if already registered
      */
     public synchronized boolean registerCollection(String dbName, String collectionName,
-                                                   Map<String, Object> sampleData) {
+                                                   Map<String, Object> sampleData,
+                                                   Map<String, DataType> fieldTypes) {
         TableId tableId = new TableId(null, dbName, collectionName);
 
         if (registeredTableIds.contains(tableId)) {
             return false;
         }
 
+        // Preserve insertion order so column positions are stable
         List<String> fieldNames = new ArrayList<>(sampleData.keySet());
         if (fieldNames.isEmpty()) {
             LOGGER.warn("Cannot register collection {} — empty data map", collectionName);
             return false;
         }
 
-        String pkFieldName = resolvePrimaryKeyField(collectionName, fieldNames);
+        String pkFieldName = resolvePrimaryKeyField(collectionName, fieldNames, fieldTypes);
         int position = 1;
 
         TableEditor tableEditor = Table.editor().tableId(tableId);
 
         for (String fieldName : fieldNames) {
             Object value = sampleData.get(fieldName);
-            int jdbcType = inferJdbcType(value);
-            String typeName = inferTypeName(value);
+            DataType milvusType = (fieldTypes != null) ? fieldTypes.get(fieldName) : null;
+            int jdbcType;
+            String typeName;
+            if (milvusType != null) {
+                jdbcType = inferJdbcTypeFromMilvus(milvusType);
+                typeName = milvusType.name();
+            }
+            else {
+                jdbcType = inferJdbcType(value);
+                typeName = inferTypeName(value);
+            }
             boolean isPk = fieldName.equals(pkFieldName);
 
             ColumnEditor columnEditor = Column.editor()
@@ -180,7 +195,24 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
         return true;
     }
 
-    private String resolvePrimaryKeyField(String collectionName, List<String> fieldNames) {
+    /**
+     * Convenience overload — delegates to
+     * {@link #registerCollection(String, String, Map, Map)} without
+     * field-type information (falls back to Java runtime-type inference).
+     *
+     * @param dbName         Milvus database name
+     * @param collectionName Milvus collection name
+     * @param sampleData     data map from the first Insert event
+     * @return {@code true} if newly registered, {@code false} if already registered
+     */
+    public synchronized boolean registerCollection(String dbName, String collectionName,
+                                                   Map<String, Object> sampleData) {
+        return registerCollection(dbName, collectionName, sampleData, null);
+    }
+
+    private String resolvePrimaryKeyField(String collectionName, List<String> fieldNames,
+                                          Map<String, DataType> fieldTypes) {
+        // 1. Prefer authoritative metadata from Milvus.
         if (metadataClient != null) {
             try {
                 io.debezium.connector.milvus.metadata.MilvusCollectionSchema schema = metadataClient.schema(collectionName);
@@ -191,10 +223,39 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
             }
             catch (Exception e) {
                 LOGGER.warn("Failed to resolve primary key for collection {} from Milvus metadata; "
-                        + "falling back to first field. Reason: {}", collectionName, e.getMessage());
+                        + "falling back to heuristics. Reason: {}", collectionName, e.getMessage());
             }
         }
+
+        // 2. Heuristic: look for common primary-key names among scalar fields.
+        for (String candidate : fieldNames) {
+            String lower = candidate.toLowerCase();
+            if (("id".equals(lower) || lower.endsWith("_id") || lower.startsWith("id_"))
+                    && isScalar(fieldTypes.get(candidate))) {
+                return candidate;
+            }
+        }
+
+        // 3. Fall back to the first scalar field; vector fields make poor primary keys.
+        for (String candidate : fieldNames) {
+            if (isScalar(fieldTypes.get(candidate))) {
+                return candidate;
+            }
+        }
+
+        // 4. Last resort: first field.
         return fieldNames.get(0);
+    }
+
+    private static boolean isScalar(DataType type) {
+        if (type == null) {
+            // Unknown type is treated as scalar to avoid defaulting to a vector.
+            return true;
+        }
+        return switch (type) {
+            case Bool, Int8, Int16, Int32, Int64, Float, Double, String, VarChar, Text, JSON -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -240,7 +301,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
             return;
         }
 
-        String pkFieldName = fieldNames.get(0);
+        String pkFieldName = resolvePrimaryKeyField(collectionName, fieldNames, Map.of());
         int position = 1;
 
         TableEditor tableEditor = Table.editor().tableId(tableId);
@@ -270,6 +331,38 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
 
         LOGGER.info("Registered collection schema: tableId={}, columns={}, pk={}",
                 tableId, fieldNames, pkFieldName);
+    }
+
+    /**
+     * Map a Milvus {@link DataType} to the most appropriate JDBC type constant.
+     *
+     * <ul>
+     *   <li>{@link DataType#JSON} → {@link Types#OTHER} (signals
+     *       {@code io.debezium.data.Json} logical type in the value converter)</li>
+     *   <li>{@link DataType#FloatVector} → {@link Types#JAVA_OBJECT} (signals
+     *       {@code io.debezium.data.vector.FloatVector} logical type)</li>
+     *   <li>{@link DataType#Float16Vector} / {@link DataType#BFloat16Vector} /
+     *       {@link DataType#BinaryVector} / {@link DataType#Int8Vector} →
+     *       {@link Types#BLOB} (raw byte array)</li>
+     *   <li>{@link DataType#SparseFloatVector} → {@link Types#VARCHAR} (JSON string)</li>
+     * </ul>
+     */
+    static int inferJdbcTypeFromMilvus(DataType type) {
+        return switch (type) {
+            case Bool -> Types.BOOLEAN;
+            case Int8, Int16 -> Types.SMALLINT;
+            case Int32 -> Types.INTEGER;
+            case Int64 -> Types.BIGINT;
+            case Float -> Types.FLOAT;
+            case Double -> Types.DOUBLE;
+            case String, VarChar, Text -> Types.VARCHAR;
+            case JSON, Geometry -> Types.OTHER;
+            case FloatVector -> Types.JAVA_OBJECT;
+            case Float16Vector, BFloat16Vector, BinaryVector, Int8Vector -> Types.BLOB;
+            case SparseFloatVector -> Types.VARCHAR;
+            case Array -> Types.ARRAY;
+            default -> Types.VARCHAR;
+        };
     }
 
     private static int inferJdbcType(Object value) {

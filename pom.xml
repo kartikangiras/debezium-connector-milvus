@@ -46,7 +46,7 @@
         <version.io.grpc>1.59.1</version.io.grpc>
 
         <!-- Integration test properties -->
-        <docker.skip>true</docker.skip>
+        <docker.skip>false</docker.skip>
         <kafka.init.timeout>120000</kafka.init.timeout>
     </properties>
 
@@ -125,6 +125,17 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-common</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-connect-avro-converter</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
@@ -259,10 +270,6 @@
 
     <build>
         <plugins>
-            <!--
-            the failsafe plugin ensures 'post-integration-test' phase always runs, even
-            when there are failed integration tests.
-            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
