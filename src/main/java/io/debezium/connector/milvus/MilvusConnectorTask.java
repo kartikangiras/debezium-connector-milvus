@@ -22,8 +22,8 @@ import io.debezium.connector.base.ChangeEventQueue;
 import io.debezium.connector.common.BaseSourceTask;
 import io.debezium.connector.common.CdcSourceTaskContext;
 import io.debezium.connector.common.DebeziumHeaderProducer;
-import io.debezium.connector.milvus.metadata.MilvusClientV2MetadataClient;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
+import io.debezium.connector.milvus.metadata.MilvusServiceMetadataClient;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
@@ -78,7 +78,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     protected ChangeEventSourceCoordinator<MilvusPartition, MilvusOffsetContext> start(Configuration config) {
         LOGGER.info("Starting Milvus connector task — wiring EventDispatcher pipeline");
 
-        this.metadataClient = new MilvusClientV2MetadataClient(connectorConfig);
+        this.metadataClient = new MilvusServiceMetadataClient(connectorConfig);
         MilvusDatabaseSchema schema = MilvusDatabaseSchema.create(connectorConfig, taskContext, metadataClient);
 
         MilvusSourceInfo sourceInfo = new MilvusSourceInfo(connectorConfig);
