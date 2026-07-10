@@ -47,6 +47,7 @@ public class MilvusConnectorConfigTest {
         assertThat(connectorConfig.getMetadataTimeoutMs()).isEqualTo(5000L);
         assertThat(connectorConfig.isStartupValidationEnabled()).isTrue();
         assertThat(connectorConfig.getEtcdRootPath()).isEqualTo("by-dev");
+        assertThat(connectorConfig.getEtcdCheckpointPath()).isNull();
         assertThat(connectorConfig.getSnapshotMode().getValue()).isEqualTo("initial");
         assertThat(connectorConfig.getWireFormat()).isEqualTo("auto");
         assertThat(connectorConfig.getTimetickStallTimeoutMs()).isEqualTo(30000L);
@@ -62,6 +63,7 @@ public class MilvusConnectorConfigTest {
         props.put("milvus.metadata.timeout.ms", "10000");
         props.put("milvus.startup.validation.enabled", "false");
         props.put("milvus.etcd.root.path", "custom-root");
+        props.put("milvus.etcd.checkpoint.path", "custom/checkpoint/%s");
         props.put("snapshot.mode", "never");
         props.put("milvus.kafka.bootstrap.servers", "kafka:9092");
         props.put("milvus.wire.format", "msgpack_batch");
@@ -76,6 +78,7 @@ public class MilvusConnectorConfigTest {
         assertThat(connectorConfig.getMetadataTimeoutMs()).isEqualTo(10000L);
         assertThat(connectorConfig.isStartupValidationEnabled()).isFalse();
         assertThat(connectorConfig.getEtcdRootPath()).isEqualTo("custom-root");
+        assertThat(connectorConfig.getEtcdCheckpointPath()).isEqualTo("custom/checkpoint/%s");
         assertThat(connectorConfig.getSnapshotMode().getValue()).isEqualTo("never");
         assertThat(connectorConfig.getKafkaBootstrapServers()).isEqualTo("kafka:9092");
         assertThat(connectorConfig.getWireFormat()).isEqualTo("msgpack_batch");
@@ -89,7 +92,7 @@ public class MilvusConnectorConfigTest {
         assertThatNoException().isThrownBy(() -> {
             org.apache.kafka.common.config.ConfigDef configDef = MilvusConnectorConfig.configDef();
             assertThat(configDef).isNotNull();
-            assertThat(configDef.names()).contains("milvus.uri", "topic.prefix", "milvus.database");
+            assertThat(configDef.names()).contains("milvus.uri", "topic.prefix", "milvus.database", "milvus.etcd.checkpoint.path");
         });
     }
 }

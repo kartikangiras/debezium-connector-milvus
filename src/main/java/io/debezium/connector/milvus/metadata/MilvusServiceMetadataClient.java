@@ -69,6 +69,15 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
         }
     }
 
+    /**
+     * Package-private constructor for unit testing that allows injecting a
+     * pre-configured Milvus service client.
+     */
+    MilvusServiceMetadataClient(MilvusServiceClient client, String databaseName) {
+        this.client = client;
+        this.databaseName = databaseName;
+    }
+
     @Override
     public List<CollectionMetadata> collections() {
         ShowCollectionsParam param = ShowCollectionsParam.newBuilder()
@@ -99,11 +108,11 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
     @Override
     public MilvusCollectionSchema schema(String collection) {
         DescribeCollectionResponse response = describe(collection);
-        CollectionSchema schema = response.getSchema();
-        if (schema == null) {
+        if (!response.hasSchema()) {
             throw new CollectionNotFoundException(collection,
                     new IllegalStateException("DescribeCollection response contained no schema"));
         }
+        CollectionSchema schema = response.getSchema();
 
         String pkField = null;
         List<MilvusCollectionSchema.FieldSchema> fields = new ArrayList<>();
@@ -212,30 +221,52 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
     }
 
     private static void throwOnFailure(String operation, R<?> response) {
-        if (response.getException() != null) {
-            Exception exception = response.getException();
-            if (exception instanceof CollectionNotFoundException) {
-                throw (CollectionNotFoundException) exception;
-            }
-            throw new DebeziumException("Milvus API failed during " + operation, exception);
+        if (response.getStatus() != null && response.getStatus() == ErrorCode.CollectionNotExists.getNumber()) {
+            throw new CollectionNotFoundException(collectionNameFrom(operation),
+                    new IllegalStateException(response.getMessage()));
         }
 
         Object data = response.getData();
-        Status status = null;
-        if (data instanceof DescribeCollectionResponse) {
-            status = ((DescribeCollectionResponse) data).getStatus();
+        Status status = extractStatus(data);
+
+        if (status != null && status.getErrorCode() == ErrorCode.CollectionNotExists) {
+            throw new CollectionNotFoundException(collectionNameFrom(operation),
+                    new IllegalStateException(status.getReason()));
         }
-        else if (data instanceof ShowCollectionsResponse) {
-            status = ((ShowCollectionsResponse) data).getStatus();
-        }
-        else if (data instanceof ListDatabasesResponse) {
-            status = ((ListDatabasesResponse) data).getStatus();
+
+        if (response.getException() != null) {
+            Exception exception = response.getException();
+            if (exception instanceof CollectionNotFoundException collectionNotFoundException) {
+                throw collectionNotFoundException;
+            }
+            throw new DebeziumException("Milvus API failed during " + operation, exception);
         }
 
         if (status != null && status.getErrorCode() != ErrorCode.Success) {
             throw new DebeziumException("Milvus API returned error during " + operation +
                     ": " + status.getErrorCode() + " — " + status.getReason());
         }
+    }
+
+    private static Status extractStatus(Object data) {
+        if (data instanceof DescribeCollectionResponse r) {
+            return r.getStatus();
+        }
+        if (data instanceof ShowCollectionsResponse r) {
+            return r.getStatus();
+        }
+        if (data instanceof ListDatabasesResponse r) {
+            return r.getStatus();
+        }
+        return null;
+    }
+
+    private static String collectionNameFrom(String operation) {
+        String prefix = "describe collection ";
+        if (operation.startsWith(prefix)) {
+            return operation.substring(prefix.length());
+        }
+        return operation;
     }
 
     private static int extractDimension(FieldSchema field) {
