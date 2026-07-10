@@ -145,6 +145,15 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withImportance(Importance.MEDIUM)
             .withDescription("Root path prefix in etcd. Defaults to 'by-dev'.");
 
+    public static final Field ETCD_CHECKPOINT_PATH = Field.create("milvus.etcd.checkpoint.path")
+            .withDisplayName("etcd checkpoint path")
+            .withType(Type.STRING)
+            .withWidth(Width.LONG)
+            .withImportance(Importance.LOW)
+            .withDescription("Optional override for the etcd checkpoint key path. "
+                    + "Must contain a '%s' placeholder for the pchannel name. "
+                    + "If not set, the path '{milvus.etcd.root.path}/data-coord/checkpoint/binlog/channel/{pchannel}' is used.");
+
     public static final Field SNAPSHOT_MODE_FIELD = Field.create("snapshot.mode")
             .withDisplayName("Snapshot mode")
             .withType(Type.STRING)
@@ -284,6 +293,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
     private final boolean startupValidationEnabled;
     private final List<String> etcdEndpoints;
     private final String etcdRootPath;
+    private final String etcdCheckpointPath;
     private final SnapshotMode snapshotMode;
     private final String kafkaBootstrapServers;
     private final String kafkaConsumerGroupId;
@@ -321,6 +331,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
         this.etcdEndpoints = Strings.listOfTrimmed(config.getString(ETCD_ENDPOINTS),
                 Function.identity());
         this.etcdRootPath = config.getString(ETCD_ROOT_PATH);
+        this.etcdCheckpointPath = config.getString(ETCD_CHECKPOINT_PATH);
         this.snapshotMode = SnapshotMode.parse(config.getString(SNAPSHOT_MODE_FIELD), SnapshotMode.INITIAL);
         this.kafkaBootstrapServers = config.getString(KAFKA_BOOTSTRAP_SERVERS);
         this.kafkaConsumerGroupId = config.getString(KAFKA_CONSUMER_GROUP_ID);
@@ -373,6 +384,10 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public String getEtcdRootPath() {
         return etcdRootPath;
+    }
+
+    public String getEtcdCheckpointPath() {
+        return etcdCheckpointPath;
     }
 
     public String getKafkaBootstrapServers() {
@@ -488,6 +503,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
                     MILVUS_DATABASE,
                     ETCD_ENDPOINTS,
                     ETCD_ROOT_PATH,
+                    ETCD_CHECKPOINT_PATH,
                     KAFKA_BOOTSTRAP_SERVERS,
                     KAFKA_CONSUMER_GROUP_ID,
                     KAFKA_MAX_POLL_INTERVAL_MS,

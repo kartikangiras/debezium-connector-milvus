@@ -144,10 +144,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    // Helper: build connector Configuration //
-    // ------------------------------------------------------------------ //
-
     private Configuration connectorConfig() {
         return TestHelper.defaultConfig(bootstrap).edit()
                 .with(MilvusConnectorConfig.PCHANNEL_NAME, PCHANNEL)
@@ -155,10 +151,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                 .with(MilvusConnectorConfig.TIMETICK_STALL_TIMEOUT_MS, 5_000L)
                 .build();
     }
-
-    // ------------------------------------------------------------------ //
-    // Helper: collection creators //
-    // ------------------------------------------------------------------ //
 
     private void createSimpleCollection(String name) {
         CreateCollectionReq.FieldSchema idField = CreateCollectionReq.FieldSchema.builder()
@@ -233,10 +225,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                 .build());
     }
 
-    // ------------------------------------------------------------------ //
-    // Helper: row builders //
-    // ------------------------------------------------------------------ //
-
     private JsonObject rowWithIdAndTitle(long id, String title) {
         JsonObject row = new JsonObject();
         row.addProperty("id", id);
@@ -261,10 +249,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         row.add("embedding", GSON.toJsonTree(vec));
         return row;
     }
-
-    // ================================================================== //
-    // Tests //
-    // ================================================================== //
 
     @Test
     void shouldCaptureInsert() throws Exception {
@@ -335,18 +319,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
 
         String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
                 + "." + collectionName;
-
-        // Poll deterministically until both the insert and the delete record have
-        // arrived on the expected topic. consumeRecordsByTopic(2) can return early in
-        // CI when the delete event is delayed, leaving recordsForTopic() as null.
-        //
-        // Note: we accumulate into a plain ArrayList rather than instantiating the
-        // protected AbstractConnectorTest.SourceRecords inner class directly. That
-        // class' implicit constructor is not visible from this connector package,
-        // and the Eclipse compiler (ecj, used for stale incremental .class files)
-        // rejects 'new SourceRecords()' with "constructor not visible", embedding a
-        // runtime 'Unresolved compilation problem' into the bytecode. Using a local
-        // list avoids the cross-package protected-inner-class instantiation entirely.
         List<SourceRecord> allRecords = new ArrayList<>();
         Awaitility.await("insert and delete records on topic " + expectedTopic)
                 .atMost(Duration.ofSeconds(20))
@@ -414,8 +386,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         assertThat(after.get("price")).isEqualTo(1.5f);
         assertThat(after.get("score")).isEqualTo(99.9d);
         assertThat(after.get("active")).isEqualTo(true);
-
-        // JSON field: value is a JSON string, schema uses io.debezium.data.Json logical type
         assertThat(after.get("meta")).isEqualTo("{\"k\":1}");
 
         Schema afterSchema = after.schema();
@@ -425,12 +395,7 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         assertThat(afterSchema.field("price").schema().type()).isEqualTo(Schema.Type.FLOAT32);
         assertThat(afterSchema.field("score").schema().type()).isEqualTo(Schema.Type.FLOAT64);
         assertThat(afterSchema.field("active").schema().type()).isEqualTo(Schema.Type.BOOLEAN);
-
-        // JSON field must carry the io.debezium.data.Json logical type name
         assertThat(afterSchema.field("meta").schema().name()).isEqualTo(Json.LOGICAL_NAME);
-
-        // FloatVector field must carry the io.debezium.data.vector.FloatVector logical type name
-        // and the value must be a List<Float>
         assertThat(afterSchema.field("embedding").schema().name()).isEqualTo(FloatVector.LOGICAL_NAME);
         assertThat(after.get("embedding")).isInstanceOf(List.class);
 
