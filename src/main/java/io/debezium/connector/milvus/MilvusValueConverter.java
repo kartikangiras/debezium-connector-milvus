@@ -75,6 +75,10 @@ import io.milvus.grpc.DataType;
  *     / {@link DataType#Float16Vector} / {@link DataType#BFloat16Vector}
  *     → {@code bytes} ({@link Types#BLOB})</li>
  * <li>{@link DataType#SparseFloatVector} → {@code Schema.Type.STRING} (JSON)</li>
+ * <li>{@link DataType#ArrayOfVector} → {@code bytes} ({@link Types#BLOB});
+ *     opaque multi-vector structure, raw bytes is the only safe representation</li>
+ * <li>{@link DataType#ArrayOfStruct} → {@code bytes} ({@link Types#BLOB});
+ *     opaque struct array, serialised as raw bytes</li>
  * </ul>
  *
  * <p>
@@ -198,6 +202,9 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
             case Float16Vector:
             case BFloat16Vector:
                 return toByteArray(value);
+            case ArrayOfVector:
+            case ArrayOfStruct:
+                return toByteArray(value);
             case None:
             default:
                 return convert(value);
@@ -294,7 +301,6 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
                 }
                 return (value) -> value == null ? null : toDouble(value);
             case Types.JAVA_OBJECT:
-                // FloatVector: convert float[] / List<Float> to List<Float>
                 return (value) -> {
                     if (value == null) {
                         return null;
@@ -406,7 +412,6 @@ public class MilvusValueConverter implements ValueConverter, ValueConverterProvi
             return FloatVector.fromLogical(null, floats);
         }
         if (v instanceof List<?> list) {
-            // Already a List<Float> from the columnar pivot path
             @SuppressWarnings("unchecked")
             List<Float> floatList = (List<Float>) list;
             return floatList;

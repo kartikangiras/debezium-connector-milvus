@@ -124,9 +124,6 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         SnapshotterService snapshotterService = MilvusSnapshotter.createService();
 
-        // Build a NotificationService with no notification channels. This is required by
-        // AbstractSnapshotChangeEventSource even when no channels are configured; passing
-        // null causes a NullPointerException at snapshot notification time.
         NotificationService<MilvusPartition, MilvusOffsetContext> notificationService = new NotificationService<>(Collections.emptyList(), connectorConfig,
                 SchemaFactory.get(), dispatcher::enqueueNotification);
 

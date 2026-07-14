@@ -5,8 +5,6 @@
  */
 package io.debezium.connector.milvus;
 
-import java.util.Map;
-
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.relational.RelationalChangeRecordEmitter;
@@ -84,8 +82,8 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
      *
      * <p>
      * For Insert and snapshot-read events, this is the full row data
-     * extracted from the deserialized {@link MilvusChangeEvent.Insert#getData()}
-     * map, ordered by {@code columnNames}. For Delete events, the after-image
+     * from the deserialized {@link MilvusChangeEvent.Insert#getRow()},
+     * ordered by {@code columnNames}. For Delete events, the after-image
      * is {@code null} (tombstone semantics).
      * </p>
      *
@@ -95,13 +93,19 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     @Override
     protected Object[] getNewColumnValues() {
         if (changeEvent instanceof MilvusChangeEvent.Insert insert) {
-            Map<String, Object> data = insert.getData();
-            if (data == null || columnNames == null) {
+            MilvusRow row = insert.getRow();
+            if (row == null || row.size() == 0 || columnNames == null) {
                 return new Object[0];
+            }
+            String[] rowNames = row.getFieldNames();
+            Object[] rowValues = row.getFieldValues();
+            java.util.Map<String, Object> byName = new java.util.HashMap<>(rowNames.length * 2);
+            for (int i = 0; i < rowNames.length; i++) {
+                byName.put(rowNames[i], rowValues[i]);
             }
             Object[] values = new Object[columnNames.length];
             for (int i = 0; i < columnNames.length; i++) {
-                values[i] = data.get(columnNames[i]);
+                values[i] = byName.get(columnNames[i]);
             }
             return values;
         }
