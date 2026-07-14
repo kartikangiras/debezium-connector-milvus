@@ -6,6 +6,7 @@
 package io.debezium.connector.milvus;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,7 @@ import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
 import io.debezium.relational.TableId;
 import io.debezium.util.Clock;
 import io.debezium.util.Strings;
+import io.milvus.grpc.DataType;
 
 /**
  * Streaming change event source for Milvus.
@@ -221,10 +223,17 @@ public class MilvusStreamingChangeEventSource
             TableId tableId = new TableId(null, dbName, collectionName);
 
             if (!databaseSchema.isCollectionRegistered(tableId)) {
-                if (event instanceof MilvusChangeEvent.Insert insert && insert.getData() != null
-                        && !insert.getData().isEmpty()) {
-                    databaseSchema.registerCollection(dbName, collectionName,
-                            insert.getData(), insert.getFieldTypes());
+                if (event instanceof MilvusChangeEvent.Insert insert
+                        && insert.getRow().size() > 0) {
+                    MilvusRow row = insert.getRow();
+                    List<FieldDefinition> fields = new ArrayList<>(row.size());
+                    String[] fieldNames = row.getFieldNames();
+                    Object[] fieldValues = row.getFieldValues();
+                    DataType[] fieldTypes = row.getFieldTypes();
+                    for (int i = 0; i < row.size(); i++) {
+                        fields.add(new FieldDefinition(fieldNames[i], fieldValues[i], fieldTypes[i]));
+                    }
+                    databaseSchema.registerCollection(dbName, collectionName, fields);
                 }
                 else {
                     LOGGER.debug("Skipping event for unregistered collection {}: type={}",

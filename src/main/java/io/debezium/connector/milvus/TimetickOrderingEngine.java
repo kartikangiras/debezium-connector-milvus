@@ -130,8 +130,6 @@ public class TimetickOrderingEngine {
         pendingByTso.computeIfAbsent(tso, k -> new ArrayList<>(4)).add(event);
         bufferedEventCount++;
         bufferedBytes += eventBytes;
-
-        // Track the vchannel if it's new
         String vchannel = event.getVchannel();
         if (vchannel != null) {
             trackedVchannels.add(vchannel);
@@ -205,8 +203,6 @@ public class TimetickOrderingEngine {
         }
 
         List<MilvusChangeEvent> flushed = new ArrayList<>();
-
-        // headMap(watermark, inclusive=true) gives all entries with key <= watermark
         var flushable = new TreeMap<>(pendingByTso.headMap(globalWatermark, true));
 
         for (Map.Entry<Long, List<MilvusChangeEvent>> entry : flushable.entrySet()) {
@@ -387,9 +383,9 @@ public class TimetickOrderingEngine {
     private long estimateEventBytes(MilvusChangeEvent event) {
         long bytes = EVENT_OVERHEAD_BYTES;
         if (event instanceof MilvusChangeEvent.Insert insert) {
-            Map<String, Object> data = insert.getData();
-            if (data != null) {
-                for (Object value : data.values()) {
+            MilvusRow row = insert.getRow();
+            if (row != null) {
+                for (Object value : row.getFieldValues()) {
                     bytes += estimateValueBytes(value);
                 }
             }
@@ -411,7 +407,7 @@ public class TimetickOrderingEngine {
             return (long) floats.length * Float.BYTES;
         }
         if (value instanceof String s) {
-            return (long) s.length() * 2; // char = 2 bytes in Java
+            return (long) s.length() * 2;
         }
         if (value instanceof List<?> list) {
             long total = 0;
@@ -420,7 +416,6 @@ public class TimetickOrderingEngine {
             }
             return total;
         }
-        // Boxed primitives
         return 16;
     }
 }

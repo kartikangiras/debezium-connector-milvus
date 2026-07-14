@@ -188,13 +188,19 @@ class TimetickOrderingEngineTest {
         byte[] largeVector = new byte[1024];
         MilvusChangeEvent event = new MilvusChangeEvent.Insert(
                 "coll", PCHANNEL, VC0, 100,
-                Map.of("id", 1L, "vector", largeVector));
+                new MilvusRow(
+                        new String[]{ "id", "vector" },
+                        new Object[]{ 1L, largeVector },
+                        new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64, io.milvus.grpc.DataType.BinaryVector }));
 
         engine.buffer(event);
 
         MilvusChangeEvent event2 = new MilvusChangeEvent.Insert(
                 "coll", PCHANNEL, VC0, 101,
-                Map.of("id", 2L, "vector", new byte[1024]));
+                new MilvusRow(
+                        new String[]{ "id", "vector" },
+                        new Object[]{ 2L, new byte[1024] },
+                        new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64, io.milvus.grpc.DataType.BinaryVector }));
 
         assertThatThrownBy(() -> engine.buffer(event2))
                 .isInstanceOf(MilvusBufferFullException.class)
@@ -356,7 +362,10 @@ class TimetickOrderingEngineTest {
     private static MilvusChangeEvent.Insert insertEvent(String collection, String pchannel,
                                                         String vchannel, long tso) {
         return new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso,
-                Map.of("id", tso, "name", "row-" + tso));
+                new MilvusRow(
+                        new String[]{ "id", "name" },
+                        new Object[]{ tso, "row-" + tso },
+                        new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64, io.milvus.grpc.DataType.VarChar }));
     }
 
     /**

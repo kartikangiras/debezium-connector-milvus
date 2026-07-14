@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.msgpack.core.MessageBufferPacker;
@@ -45,9 +44,17 @@ public class MilvusProtoDeserializerTest {
 
     private final MilvusColumnarPivot pivot = new MilvusColumnarPivot(new MilvusValueConverter(null));
 
-    // -------------------------------------------------------------------------
-    // proto_single — Insert
-    // -------------------------------------------------------------------------
+    private static Object rowGet(MilvusChangeEvent.Insert insert, String fieldName) {
+        MilvusRow row = insert.getRow();
+        String[] names = row.getFieldNames();
+        Object[] values = row.getFieldValues();
+        for (int i = 0; i < names.length; i++) {
+            if (names[i].equals(fieldName)) {
+                return values[i];
+            }
+        }
+        return null;
+    }
 
     @Test
     @FixFor("debezium/dbz#2089")
@@ -74,17 +81,20 @@ public class MilvusProtoDeserializerTest {
         assertThat(first.getPchannel()).isEqualTo(TOPIC);
         assertThat(first.getVchannel()).isEqualTo("books_v0");
         assertThat(first.getTso()).isEqualTo(123L);
-        assertThat(first.getData()).containsEntry("id", 1L).containsEntry("title", "Dune");
-        assertThat(first.getData().get("embedding")).isInstanceOf(java.util.List.class);
+        assertThat(first.getRow().getFieldNames()).containsExactly("id", "title", "embedding");
+        assertThat(rowGet(first, "id")).isEqualTo(1L);
+        assertThat(rowGet(first, "title")).isEqualTo("Dune");
+        assertThat(rowGet(first, "embedding")).isInstanceOf(java.util.List.class);
         @SuppressWarnings("unchecked")
-        java.util.List<Float> firstEmbedding = (java.util.List<Float>) first.getData().get("embedding");
+        java.util.List<Float> firstEmbedding = (java.util.List<Float>) rowGet(first, "embedding");
         assertThat(firstEmbedding).containsExactly(1.0f, 2.0f);
 
         MilvusChangeEvent.Insert second = (MilvusChangeEvent.Insert) events.get(1);
-        assertThat(second.getData()).containsEntry("id", 2L).containsEntry("title", "Hyperion");
-        assertThat(second.getData().get("embedding")).isInstanceOf(java.util.List.class);
+        assertThat(rowGet(second, "id")).isEqualTo(2L);
+        assertThat(rowGet(second, "title")).isEqualTo("Hyperion");
+        assertThat(rowGet(second, "embedding")).isInstanceOf(java.util.List.class);
         @SuppressWarnings("unchecked")
-        java.util.List<Float> secondEmbedding = (java.util.List<Float>) second.getData().get("embedding");
+        java.util.List<Float> secondEmbedding = (java.util.List<Float>) rowGet(second, "embedding");
         assertThat(secondEmbedding).containsExactly(3.0f, 4.0f);
     }
 
@@ -103,8 +113,8 @@ public class MilvusProtoDeserializerTest {
         List<MilvusChangeEvent> events = deserializer.deserialize(message(insert.toByteArray()));
 
         assertThat(events).hasSize(2);
-        assertThat(((MilvusChangeEvent.Insert) events.get(0)).getData()).containsEntry("id", 10L);
-        assertThat(((MilvusChangeEvent.Insert) events.get(1)).getData()).containsEntry("id", 11L);
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(0), "id")).isEqualTo(10L);
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(1), "id")).isEqualTo(11L);
     }
 
     @Test
@@ -134,8 +144,8 @@ public class MilvusProtoDeserializerTest {
         List<MilvusChangeEvent> events = deserializer.deserialize(message(insert.toByteArray()));
 
         assertThat(events).hasSize(2);
-        assertThat(((MilvusChangeEvent.Insert) events.get(0)).getData()).containsEntry("meta", "{\"k\":1}");
-        assertThat(((MilvusChangeEvent.Insert) events.get(1)).getData()).containsEntry("meta", "{\"k\":2}");
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(0), "meta")).isEqualTo("{\"k\":1}");
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(1), "meta")).isEqualTo("{\"k\":2}");
     }
 
     @Test
@@ -162,8 +172,8 @@ public class MilvusProtoDeserializerTest {
         List<MilvusChangeEvent> events = deserializer.deserialize(message(insert.toByteArray()));
 
         assertThat(events).hasSize(2);
-        assertThat(((MilvusChangeEvent.Insert) events.get(0)).getData()).containsEntry("active", true);
-        assertThat(((MilvusChangeEvent.Insert) events.get(1)).getData()).containsEntry("active", false);
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(0), "active")).isEqualTo(true);
+        assertThat(rowGet((MilvusChangeEvent.Insert) events.get(1), "active")).isEqualTo(false);
     }
 
     @Test
@@ -215,10 +225,6 @@ public class MilvusProtoDeserializerTest {
         assertThat(event.getPrimaryKeys()).isEqualTo(List.of("pk-a", "pk-b"));
     }
 
-    // -------------------------------------------------------------------------
-    // proto_single — DDL and TimeTick
-    // -------------------------------------------------------------------------
-
     @Test
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeProtoSingleDdlAndTimetick() throws Exception {
@@ -248,10 +254,6 @@ public class MilvusProtoDeserializerTest {
         assertThat(timetickEvents).singleElement().isInstanceOf(MilvusChangeEvent.TimeTick.class);
         assertThat(timetickEvents.get(0).getTso()).isEqualTo(44L);
     }
-
-    // -------------------------------------------------------------------------
-    // proto_single — error cases
-    // -------------------------------------------------------------------------
 
     @Test
     @FixFor("debezium/dbz#2089")
@@ -283,10 +285,6 @@ public class MilvusProtoDeserializerTest {
                 .hasMessageContaining("Unhandled MsgType");
     }
 
-    // -------------------------------------------------------------------------
-    // msgpack_batch
-    // -------------------------------------------------------------------------
-
     @Test
     @FixFor("debezium/dbz#2089")
     void shouldDeserializeMsgpackBatchInsertAndDelete() throws Exception {
@@ -299,10 +297,12 @@ public class MilvusProtoDeserializerTest {
 
         assertThat(events).hasSize(3);
         assertThat(events.get(0)).isInstanceOf(MilvusChangeEvent.Insert.class);
-        assertThat(((MilvusChangeEvent.Insert) events.get(0)).getData())
-                .isEqualTo(Map.of("id", 1L, "title", "Dune"));
-        assertThat(((MilvusChangeEvent.Insert) events.get(1)).getData())
-                .isEqualTo(Map.of("id", 2L, "title", "Hyperion"));
+        MilvusChangeEvent.Insert row0 = (MilvusChangeEvent.Insert) events.get(0);
+        assertThat(rowGet(row0, "id")).isEqualTo(1L);
+        assertThat(rowGet(row0, "title")).isEqualTo("Dune");
+        MilvusChangeEvent.Insert row1 = (MilvusChangeEvent.Insert) events.get(1);
+        assertThat(rowGet(row1, "id")).isEqualTo(2L);
+        assertThat(rowGet(row1, "title")).isEqualTo("Hyperion");
         assertThat(events.get(2)).isInstanceOf(MilvusChangeEvent.Delete.class);
         assertThat(((MilvusChangeEvent.Delete) events.get(2)).getPrimaryKeys()).isEqualTo(List.of(1L, 2L));
     }

@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import io.debezium.config.Configuration;
 import io.debezium.connector.common.BaseSourceConnector;
+import io.debezium.spi.schema.DataCollectionId;
 import io.debezium.util.Strings;
 
 /**
@@ -68,6 +69,11 @@ public class MilvusConnector extends BaseSourceConnector {
     @Override
     public ConfigDef config() {
         return MilvusConnectorConfig.configDef();
+    }
+
+    @Override
+    public <T extends DataCollectionId> List<T> getMatchingCollections(Configuration config) {
+        return Collections.emptyList();
     }
 
     @Override

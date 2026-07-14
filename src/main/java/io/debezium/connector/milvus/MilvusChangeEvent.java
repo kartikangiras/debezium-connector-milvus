@@ -5,10 +5,6 @@
  */
 package io.debezium.connector.milvus;
 
-import java.util.Map;
-
-import io.milvus.grpc.DataType;
-
 /**
  * Sealed hierarchy representing a single change event from Milvus.
  *
@@ -56,32 +52,21 @@ public sealed class MilvusChangeEvent {
      * Insert change event carrying a new row/vector.
      */
     public static final class Insert extends MilvusChangeEvent {
-        private final Map<String, Object> data;
-        /** Per-field Milvus DataType, keyed by field name. */
-        private final Map<String, DataType> fieldTypes;
+        private final MilvusRow row;
 
         public Insert(String collectionName, String pchannel, String vchannel, long tso,
-                      Map<String, Object> data) {
-            this(collectionName, pchannel, vchannel, tso, data, Map.of());
-        }
-
-        public Insert(String collectionName, String pchannel, String vchannel, long tso,
-                      Map<String, Object> data, Map<String, DataType> fieldTypes) {
+                      MilvusRow row) {
             super(collectionName, pchannel, vchannel, tso);
-            this.data = data;
-            this.fieldTypes = fieldTypes != null ? fieldTypes : Map.of();
-        }
-
-        public Map<String, Object> getData() {
-            return data;
+            this.row = row != null ? row : new MilvusRow(new String[0], new Object[0], new io.milvus.grpc.DataType[0]);
         }
 
         /**
-         * Returns the per-field Milvus {@link DataType}, keyed by field name.
-         * Never null; may be empty if type information was not available at parse time.
+         * Returns the row data as parallel arrays.
+         * Never null; may be empty ({@link MilvusRow#size()} == 0) if the event
+         * carried no field data.
          */
-        public Map<String, DataType> getFieldTypes() {
-            return fieldTypes;
+        public MilvusRow getRow() {
+            return row;
         }
     }
 

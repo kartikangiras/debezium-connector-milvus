@@ -7,7 +7,6 @@ package io.debezium.connector.milvus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -66,7 +65,7 @@ public class MilvusStreamingChangeEventSourceTest {
         schema = mock(MilvusDatabaseSchema.class);
 
         when(schema.isCollectionRegistered(any(TableId.class))).thenReturn(false);
-        when(schema.registerCollection(anyString(), anyString(), anyMap(), anyMap())).thenReturn(true);
+        when(schema.registerCollection(anyString(), anyString(), any(List.class))).thenReturn(true);
         when(schema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id" });
         when(schema.getPkFieldName(any(TableId.class))).thenReturn("id");
 
@@ -201,8 +200,12 @@ public class MilvusStreamingChangeEventSourceTest {
     void shouldDeserializeAndBufferEvents() throws Exception {
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
+        MilvusRow insertRow = new MilvusRow(
+                new String[]{ "id" },
+                new Object[]{ 1L },
+                new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64 });
         MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
-                "coll", TOPIC, TOPIC, 100, Map.of("id", 1L));
+                "coll", TOPIC, TOPIC, 100, insertRow);
         MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
                 null, TOPIC, TOPIC, 200);
 
@@ -228,9 +231,12 @@ public class MilvusStreamingChangeEventSourceTest {
     void shouldDispatchInsertEventThroughPipeline() throws Exception {
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
-        Map<String, Object> data = Map.of("id", 42L, "name", "test-vector");
+        MilvusRow insertRow = new MilvusRow(
+                new String[]{ "id", "name" },
+                new Object[]{ 42L, "test-vector" },
+                new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64, io.milvus.grpc.DataType.VarChar });
         MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
-                "test_collection", TOPIC, TOPIC, 100, data);
+                "test_collection", TOPIC, TOPIC, 100, insertRow);
         MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
                 null, TOPIC, TOPIC, 200);
 
@@ -245,7 +251,10 @@ public class MilvusStreamingChangeEventSourceTest {
 
         source.execute(context, partition, offsetContext);
 
-        verify(schema).registerCollection("default", "test_collection", data, Map.of());
+        List<FieldDefinition> expectedFields = List.of(
+                new FieldDefinition("id", 42L, io.milvus.grpc.DataType.Int64),
+                new FieldDefinition("name", "test-vector", io.milvus.grpc.DataType.VarChar));
+        verify(schema).registerCollection("default", "test_collection", expectedFields);
 
         verify(dispatcher).dispatchDataChangeEvent(
                 any(MilvusPartition.class),
@@ -258,8 +267,12 @@ public class MilvusStreamingChangeEventSourceTest {
     void shouldSkipEventsWithNoCollectionName() throws Exception {
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
+        MilvusRow insertRow = new MilvusRow(
+                new String[]{ "id" },
+                new Object[]{ 1L },
+                new io.milvus.grpc.DataType[]{ io.milvus.grpc.DataType.Int64 });
         MilvusChangeEvent.Insert insert = new MilvusChangeEvent.Insert(
-                null, TOPIC, TOPIC, 100, Map.of("id", 1L));
+                null, TOPIC, TOPIC, 100, insertRow);
         MilvusChangeEvent.TimeTick tick = new MilvusChangeEvent.TimeTick(
                 null, TOPIC, TOPIC, 200);
 

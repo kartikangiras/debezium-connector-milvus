@@ -8,9 +8,7 @@ package io.debezium.connector.milvus;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,8 +110,6 @@ public class MilvusProtoDeserializer {
                 : deserializeMsgPackBatch(message);
     }
 
-    // proto_single
-
     private List<MilvusChangeEvent> deserializeProtoSingle(RawMilvusMessage message)
             throws MilvusWireFormatMismatchException {
         byte[] bytes = message.getValue();
@@ -143,7 +139,6 @@ public class MilvusProtoDeserializer {
                     yield List.of(toDdlEvent(dc.getCollectionName(), dc.getBase(), "DROP_COLLECTION", message));
                 }
                 case TimeTick -> List.of(toTimeTickEvent(base, message));
-                // Partition DDL — update tracking metadata; no record emitted.
                 case CreatePartition, DropPartition -> {
                     LOGGER.debug("Skipping partition DDL msgType={} at topic={} offset={}",
                             msgType, safeTopic(message), safeOffset(message));
@@ -168,8 +163,6 @@ public class MilvusProtoDeserializer {
         }
     }
 
-    // proto event builders
-
     private List<MilvusChangeEvent> toInsertEvents(InsertRequest ins, RawMilvusMessage message)
             throws MilvusWireFormatMismatchException {
         long tso = baseTimestamp(ins.getBase());
@@ -178,23 +171,20 @@ public class MilvusProtoDeserializer {
         String vchannel = Strings.defaultIfEmpty(ins.getShardName(), pchannel);
 
         List<MilvusFieldData> columns = new ArrayList<>();
-        Map<String, DataType> fieldTypes = new LinkedHashMap<>();
         for (FieldData fd : ins.getFieldsDataList()) {
-            MilvusFieldData col = toFieldData(fd);
-            columns.add(col);
-            fieldTypes.put(col.getFieldName(), col.getDataType());
+            columns.add(toFieldData(fd));
         }
         long numRows = ins.getNumRows();
         if (numRows == 0 && !Collect.isNullOrEmpty(columns)) {
             numRows = columns.get(0).getValues().size();
         }
-        List<Map<String, Object>> rows = pivot.pivot(
+        List<MilvusRow> rows = pivot.pivot(
                 columns, (int) numRows,
                 wireFormat, safeTopic(message), safePartition(message), safeOffset(message));
 
         List<MilvusChangeEvent> events = new ArrayList<>(rows.size());
-        for (Map<String, Object> row : rows) {
-            events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row, fieldTypes));
+        for (MilvusRow row : rows) {
+            events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row));
         }
         return events;
     }
@@ -220,7 +210,6 @@ public class MilvusProtoDeserializer {
             }
         }
         else if (del.getInt64PrimaryKeysCount() > 0) {
-            // Legacy field — older Milvus versions that predate the IDs oneof
             primaryKeys = del.getInt64PrimaryKeysList();
         }
         else {
@@ -231,10 +220,6 @@ public class MilvusProtoDeserializer {
     }
 
     private MilvusChangeEvent toTimeTickEvent(MsgBase base, RawMilvusMessage message) {
-        // TimeTickMsg has only MsgBase; no shard_name/vchannel field is exposed at
-        // this proto level. The vchannel is set to the pchannel (the Kafka topic) so
-        // the TimetickOrderingEngine can recognise this as a broadcast watermark for
-        // the whole pchannel.
         return new MilvusChangeEvent.TimeTick(null, safeTopic(message), safeTopic(message), baseTimestamp(base));
     }
 
@@ -425,15 +410,8 @@ public class MilvusProtoDeserializer {
         return sb.toString();
     }
 
-    // msgpack_batch
-
     private List<MilvusChangeEvent> deserializeMsgPackBatch(RawMilvusMessage message)
             throws MilvusWireFormatMismatchException {
-        // MsgPack batch structure emitted by the msgpack msgstream:
-        // [ msgType:int, pchannel:string, messages:array ]
-        // Each element of `messages` is itself a MsgPack map describing one
-        // message (Insert/Delete/DDL/TimeTick) with its own msgType field.
-        // We read the outer array lazily and dispatch per element.
         byte[] bytes = message.getValue();
         List<MilvusChangeEvent> events = new ArrayList<>();
         try (org.msgpack.core.MessageUnpacker unpacker = org.msgpack.core.MessagePack.newDefaultUnpacker(bytes)) {
@@ -461,9 +439,6 @@ public class MilvusProtoDeserializer {
                     }
                 }
             }
-            // If there was no inner messages array but msgType was set, this is
-            // a single flattened message (some Milvus versions embed the body
-            // directly). Treat msgType as the message type.
             if (messagesIdx < 0 && msgType >= 0) {
                 LOGGER.debug("msgpack_batch had no inner messages array at topic={} offset={}",
                         safeTopic(message), safeOffset(message));
@@ -538,11 +513,11 @@ public class MilvusProtoDeserializer {
         if (numRows == 0 && !Collect.isNullOrEmpty(columns)) {
             numRows = columns.get(0).getValues().size();
         }
-        List<Map<String, Object>> rows = pivot.pivot(
+        List<MilvusRow> rows = pivot.pivot(
                 columns, numRows,
                 wireFormat, safeTopic(message), safePartition(message), safeOffset(message));
         List<MilvusChangeEvent> events = new ArrayList<>(rows.size());
-        for (Map<String, Object> row : rows) {
+        for (MilvusRow row : rows) {
             events.add(new MilvusChangeEvent.Insert(collection, pchannel, vchannel, tso, row));
         }
         return events;
@@ -662,8 +637,6 @@ public class MilvusProtoDeserializer {
         return v.toString();
     }
 
-    // MsgPack helpers
-
     private static org.msgpack.value.Value strKey(String s) {
         return org.msgpack.value.ValueFactory.newString(s);
     }
@@ -690,8 +663,6 @@ public class MilvusProtoDeserializer {
         }
         return out;
     }
-
-    // Exception helpers
 
     private MilvusWireFormatMismatchException mismatch(RawMilvusMessage message, String detail, Throwable cause) {
         if (cause != null) {
