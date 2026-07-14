@@ -10,7 +10,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -21,17 +20,29 @@ public class MilvusColumnarPivotTest {
 
     private final MilvusColumnarPivot pivot = new MilvusColumnarPivot(new MilvusValueConverter(null));
 
+    /** Helper: look up a value from a MilvusRow by field name. */
+    private static Object get(MilvusRow row, String fieldName) {
+        String[] names = row.getFieldNames();
+        Object[] values = row.getFieldValues();
+        for (int i = 0; i < names.length; i++) {
+            if (names[i].equals(fieldName)) {
+                return values[i];
+            }
+        }
+        return null;
+    }
+
     @Test
     @FixFor("debezium/dbz#2089")
     void shouldPivotSingleColumnThreeRows() {
         MilvusFieldData id = new MilvusFieldData("id", DataType.Int64, List.of(1L, 2L, 3L), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(id), 3);
+        List<MilvusRow> rows = pivot.pivot(List.of(id), 3);
 
         assertThat(rows).hasSize(3);
-        assertThat(rows.get(0)).containsEntry("id", 1L);
-        assertThat(rows.get(1)).containsEntry("id", 2L);
-        assertThat(rows.get(2)).containsEntry("id", 3L);
+        assertThat(get(rows.get(0), "id")).isEqualTo(1L);
+        assertThat(get(rows.get(1), "id")).isEqualTo(2L);
+        assertThat(get(rows.get(2), "id")).isEqualTo(3L);
     }
 
     @Test
@@ -40,11 +51,14 @@ public class MilvusColumnarPivotTest {
         MilvusFieldData id = new MilvusFieldData("id", DataType.Int64, List.of(1L, 2L), 0);
         MilvusFieldData name = new MilvusFieldData("name", DataType.VarChar, List.of("a", "b"), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(id, name), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(id, name), 2);
 
         assertThat(rows).hasSize(2);
-        assertThat(rows.get(0)).hasSize(2).containsEntry("id", 1L).containsEntry("name", "a");
-        assertThat(rows.get(1)).hasSize(2).containsEntry("id", 2L).containsEntry("name", "b");
+        assertThat(rows.get(0).size()).isEqualTo(2);
+        assertThat(get(rows.get(0), "id")).isEqualTo(1L);
+        assertThat(get(rows.get(0), "name")).isEqualTo("a");
+        assertThat(get(rows.get(1), "id")).isEqualTo(2L);
+        assertThat(get(rows.get(1), "name")).isEqualTo("b");
     }
 
     @Test
@@ -57,14 +71,14 @@ public class MilvusColumnarPivotTest {
         MilvusFieldData s = new MilvusFieldData("s", DataType.VarChar, List.of("x", "y"), 0);
         MilvusFieldData d = new MilvusFieldData("d", DataType.Double, List.of(1.5d, 2.5d), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(f, b, i, s, d), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(f, b, i, s, d), 2);
 
         assertThat(rows).hasSize(2);
-        Map<String, Object> row0 = rows.get(0);
-        assertThat(row0.get("b")).isEqualTo(true);
-        assertThat(row0.get("i")).isEqualTo(10);
-        assertThat(row0.get("s")).isEqualTo("x");
-        assertThat(row0.get("d")).isEqualTo(1.5d);
+        MilvusRow row0 = rows.get(0);
+        assertThat(get(row0, "b")).isEqualTo(true);
+        assertThat(get(row0, "i")).isEqualTo(10);
+        assertThat(get(row0, "s")).isEqualTo("x");
+        assertThat(get(row0, "d")).isEqualTo(1.5d);
     }
 
     @Test
@@ -74,16 +88,16 @@ public class MilvusColumnarPivotTest {
         float[] v1 = { 0.3f, 0.4f };
         MilvusFieldData vec = new MilvusFieldData("vector", DataType.FloatVector, List.of(v0, v1), 2);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(vec), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(vec), 2);
 
         assertThat(rows).hasSize(2);
         // FloatVector is now encoded as List<Float> for io.debezium.data.vector.FloatVector
-        assertThat(rows.get(0).get("vector")).isInstanceOf(List.class);
-        assertThat(rows.get(1).get("vector")).isInstanceOf(List.class);
+        assertThat(get(rows.get(0), "vector")).isInstanceOf(List.class);
+        assertThat(get(rows.get(1), "vector")).isInstanceOf(List.class);
         @SuppressWarnings("unchecked")
-        List<Float> vec0 = (List<Float>) rows.get(0).get("vector");
+        List<Float> vec0 = (List<Float>) get(rows.get(0), "vector");
         @SuppressWarnings("unchecked")
-        List<Float> vec1 = (List<Float>) rows.get(1).get("vector");
+        List<Float> vec1 = (List<Float>) get(rows.get(1), "vector");
         assertThat(vec0).containsExactly(0.1f, 0.2f);
         assertThat(vec1).containsExactly(0.3f, 0.4f);
     }
@@ -95,11 +109,11 @@ public class MilvusColumnarPivotTest {
         byte[] b1 = { 1, 0 };
         MilvusFieldData vec = new MilvusFieldData("vector", DataType.BinaryVector, List.of(b0, b1), 16);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(vec), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(vec), 2);
 
         assertThat(rows).hasSize(2);
-        assertThat((byte[]) rows.get(0).get("vector")).containsExactly(0, 1);
-        assertThat((byte[]) rows.get(1).get("vector")).containsExactly(1, 0);
+        assertThat((byte[]) get(rows.get(0), "vector")).containsExactly(0, 1);
+        assertThat((byte[]) get(rows.get(1), "vector")).containsExactly(1, 0);
     }
 
     @Test
@@ -108,10 +122,10 @@ public class MilvusColumnarPivotTest {
         MilvusFieldData json = new MilvusFieldData("meta", DataType.JSON,
                 List.of("{\"k\":1}", "{\"k\":2}"), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(json), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(json), 2);
 
-        assertThat(rows.get(0).get("meta")).isEqualTo("{\"k\":1}");
-        assertThat(rows.get(1).get("meta")).isEqualTo("{\"k\":2}");
+        assertThat(get(rows.get(0), "meta")).isEqualTo("{\"k\":1}");
+        assertThat(get(rows.get(1), "meta")).isEqualTo("{\"k\":2}");
     }
 
     @Test
@@ -121,10 +135,10 @@ public class MilvusColumnarPivotTest {
         MilvusFieldData name = new MilvusFieldData("name", DataType.VarChar,
                 Arrays.asList("a", null), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(id, name), 2);
+        List<MilvusRow> rows = pivot.pivot(List.of(id, name), 2);
 
-        assertThat(rows.get(0).get("name")).isEqualTo("a");
-        assertThat(rows.get(1).get("name")).isNull();
+        assertThat(get(rows.get(0), "name")).isEqualTo("a");
+        assertThat(get(rows.get(1), "name")).isNull();
     }
 
     @Test
@@ -171,13 +185,13 @@ public class MilvusColumnarPivotTest {
 
     @Test
     @FixFor("debezium/dbz#2089")
-    void shouldPreserveFieldOrderInOutputMap() {
+    void shouldPreserveFieldOrderInOutputRow() {
         MilvusFieldData a = new MilvusFieldData("a", DataType.Int64, List.of(1L), 0);
         MilvusFieldData b = new MilvusFieldData("b", DataType.VarChar, List.of("x"), 0);
         MilvusFieldData c = new MilvusFieldData("c", DataType.Bool, List.of(true), 0);
 
-        List<Map<String, Object>> rows = pivot.pivot(List.of(a, b, c), 1);
+        List<MilvusRow> rows = pivot.pivot(List.of(a, b, c), 1);
 
-        assertThat(rows.get(0).keySet()).containsExactly("a", "b", "c");
+        assertThat(rows.get(0).getFieldNames()).containsExactly("a", "b", "c");
     }
 }
