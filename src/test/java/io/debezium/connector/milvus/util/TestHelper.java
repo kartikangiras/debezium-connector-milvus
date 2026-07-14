@@ -55,6 +55,7 @@ public final class TestHelper {
         props.put("poll.interval.ms", "100");
         props.put("milvus.timetick.stall.timeout.ms", "2000");
         props.put("tombstones.on.delete", "false");
+        props.put("bootstrap.servers", bootstrapServers);
         return Configuration.from(props);
     }
 

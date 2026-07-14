@@ -18,7 +18,7 @@ public class MilvusConnectorTaskTest {
     @FixFor("debezium/dbz#2028")
     void shouldExposeVersion() {
         MilvusConnectorTask task = new MilvusConnectorTask();
-        assertThat(task.version()).isEqualTo("3.6.0-SNAPSHOT");
+        assertThat(task.version()).isEqualTo(Module.version());
     }
 
     @Test

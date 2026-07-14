@@ -19,6 +19,7 @@ import io.debezium.config.ConfigDefinition;
 import io.debezium.config.Configuration;
 import io.debezium.config.EnumeratedValue;
 import io.debezium.config.Field;
+import io.debezium.config.Field.Group;
 import io.debezium.connector.SourceInfoStructMaker;
 import io.debezium.jdbc.JdbcValueConverters.DecimalMode;
 import io.debezium.relational.ColumnFilterMode;
@@ -481,30 +482,43 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     private static final ConfigDefinition CONFIG_DEFINITION = RelationalDatabaseConnectorConfig.CONFIG_DEFINITION.edit()
             .name("Milvus")
-            .type(
+            .group(Group.CONNECTION,
                     MILVUS_URI,
                     MILVUS_TOKEN,
                     MILVUS_DATABASE,
-                    COLLECTION_INCLUDE_LIST,
-                    COLLECTION_EXCLUDE_LIST,
-                    METADATA_TIMEOUT_MS,
-                    STARTUP_VALIDATION_ENABLED,
                     ETCD_ENDPOINTS,
                     ETCD_ROOT_PATH,
-                    SNAPSHOT_MODE_FIELD,
                     KAFKA_BOOTSTRAP_SERVERS,
                     KAFKA_CONSUMER_GROUP_ID,
                     KAFKA_MAX_POLL_INTERVAL_MS,
                     KAFKA_KEY_DESERIALIZER,
                     KAFKA_VALUE_DESERIALIZER,
-                    KAFKA_PARTITION_INDEX,
+                    KAFKA_PARTITION_INDEX)
+            .group(Group.FILTERS,
+                    COLLECTION_INCLUDE_LIST,
+                    COLLECTION_EXCLUDE_LIST)
+            .group(Group.CONNECTOR_SNAPSHOT,
+                    SNAPSHOT_MODE_FIELD,
+                    SNAPSHOT_BATCH_SIZE)
+            .group(Group.CONNECTOR,
                     WIRE_FORMAT,
-                    TIMETICK_STALL_TIMEOUT_MS,
                     UPSERT_MODE,
-                    SNAPSHOT_BATCH_SIZE,
-                    BUFFER_MAX_EVENTS,
-                    BUFFER_MAX_BYTES,
                     PCHANNEL_NAME)
+            .group(Group.CONNECTOR_ADVANCED,
+                    METADATA_TIMEOUT_MS,
+                    STARTUP_VALIDATION_ENABLED,
+                    TIMETICK_STALL_TIMEOUT_MS,
+                    BUFFER_MAX_EVENTS,
+                    BUFFER_MAX_BYTES)
+            // Milvus is not a JDBC datasource; remove the inherited relational fields
+            // that are marked required() so that BaseSourceTask field validation
+            // does not fail with "A value is required".
+            .excluding(
+                    RelationalDatabaseConnectorConfig.HOSTNAME,
+                    RelationalDatabaseConnectorConfig.PORT,
+                    RelationalDatabaseConnectorConfig.USER,
+                    RelationalDatabaseConnectorConfig.PASSWORD,
+                    RelationalDatabaseConnectorConfig.DATABASE_NAME)
             .create();
 
     public static Field.Set ALL_FIELDS = Field.setOf(CONFIG_DEFINITION.all());
