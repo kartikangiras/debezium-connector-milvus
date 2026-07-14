@@ -240,8 +240,8 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
 
         if (response.getException() != null) {
             Exception exception = response.getException();
-            if (exception instanceof CollectionNotFoundException) {
-                throw (CollectionNotFoundException) exception;
+            if (exception instanceof CollectionNotFoundException collectionNotFoundException) {
+                throw collectionNotFoundException;
             }
             throw new DebeziumException("Milvus API failed during " + operation, exception);
         }
@@ -253,14 +253,14 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
     }
 
     private static Status extractStatus(Object data) {
-        if (data instanceof DescribeCollectionResponse) {
-            return ((DescribeCollectionResponse) data).getStatus();
+        if (data instanceof DescribeCollectionResponse r) {
+            return r.getStatus();
         }
-        if (data instanceof ShowCollectionsResponse) {
-            return ((ShowCollectionsResponse) data).getStatus();
+        if (data instanceof ShowCollectionsResponse r) {
+            return r.getStatus();
         }
-        if (data instanceof ListDatabasesResponse) {
-            return ((ListDatabasesResponse) data).getStatus();
+        if (data instanceof ListDatabasesResponse r) {
+            return r.getStatus();
         }
         return null;
     }
