@@ -22,6 +22,8 @@ import io.debezium.connector.base.ChangeEventQueue;
 import io.debezium.connector.common.BaseSourceTask;
 import io.debezium.connector.common.CdcSourceTaskContext;
 import io.debezium.connector.common.DebeziumHeaderProducer;
+import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
+import io.debezium.connector.milvus.checkpoint.JetcdEtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.connector.milvus.metadata.MilvusServiceMetadataClient;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
@@ -56,6 +58,8 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     private volatile ChangeEventQueue<DataChangeEvent> queue;
     private volatile MilvusErrorHandler errorHandler;
     private volatile MilvusMetadataClient metadataClient;
+    private volatile EtcdCheckpointReader checkpointReader;
+    private volatile MilvusSnapshotQueryClient snapshotQueryClient;
 
     @Override
     public String version() {
@@ -79,6 +83,8 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
         LOGGER.info("Starting Milvus connector task — wiring EventDispatcher pipeline");
 
         this.metadataClient = new MilvusServiceMetadataClient(connectorConfig);
+        this.checkpointReader = new JetcdEtcdCheckpointReader(connectorConfig);
+        this.snapshotQueryClient = new MilvusSnapshotQueryClient(connectorConfig);
         MilvusDatabaseSchema schema = MilvusDatabaseSchema.create(connectorConfig, taskContext, metadataClient);
 
         MilvusSourceInfo sourceInfo = new MilvusSourceInfo(connectorConfig);
@@ -120,7 +126,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
                 headerProducer);
 
         MilvusChangeEventSourceFactory factory = new MilvusChangeEventSourceFactory(
-                connectorConfig, dispatcher, schema);
+                connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient);
 
         SnapshotterService snapshotterService = MilvusSnapshotter.createService();
 
@@ -157,6 +163,24 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
     @Override
     protected void doStop() {
         LOGGER.info("Stopping Milvus connector task");
+        if (snapshotQueryClient != null) {
+            try {
+                snapshotQueryClient.close();
+            }
+            catch (Exception e) {
+                LOGGER.warn("Exception while closing Milvus snapshot query client", e);
+            }
+            snapshotQueryClient = null;
+        }
+        if (checkpointReader != null) {
+            try {
+                checkpointReader.close();
+            }
+            catch (Exception e) {
+                LOGGER.warn("Exception while closing etcd checkpoint reader", e);
+            }
+            checkpointReader = null;
+        }
         if (metadataClient != null) {
             try {
                 metadataClient.close();

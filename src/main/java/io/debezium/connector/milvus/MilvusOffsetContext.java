@@ -30,6 +30,7 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
 
     private static final String MQ_OFFSET_PREFIX = "mq_offset_";
     private static final String VCHANNEL_TIMETICK_PREFIX = "vchannel_timetick_";
+    private static final String CHECKPOINT_TIMESTAMP_KEY = "checkpoint_ts";
 
     private final Map<String, Object> offset;
     private TransactionContext transactionContext;
@@ -141,6 +142,43 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
 
     public boolean isSnapshotCompleted() {
         return snapshotCompleted;
+    }
+
+    /**
+     * Mark this offset context as having completed the snapshot phase.
+     *
+     * <p>Sets the {@link #snapshotCompleted} flag to {@code true} and calls
+     * {@link #postSnapshotCompletion()} to clear the snapshot type indicator in
+     * {@link MilvusSourceInfo}. This is called from
+     * {@link MilvusSnapshotChangeEventSource#doExecute} once all collections
+     * have been processed.</p>
+     */
+    public void markSnapshotCompleted() {
+        this.snapshotCompleted = true;
+        postSnapshotCompletion();
+    }
+
+    /**
+     * Store the etcd checkpoint TSO used as {@code guarantee_ts} during the
+     * snapshot phase. Persisted in the offset so it survives restarts and
+     * can be surfaced in monitoring.
+     */
+    public void setCheckpointTimestamp(long ts) {
+        this.offset.put(CHECKPOINT_TIMESTAMP_KEY, ts);
+    }
+
+    /**
+     * Retrieve the stored checkpoint TSO, or {@code 0} if not yet set.
+     */
+    public long getCheckpointTimestamp() {
+        Object value = this.offset.get(CHECKPOINT_TIMESTAMP_KEY);
+        if (value == null) {
+            return 0L;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return Long.parseLong(value.toString());
     }
 
     @Override

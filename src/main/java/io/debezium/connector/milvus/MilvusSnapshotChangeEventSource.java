@@ -5,9 +5,21 @@
  */
 package io.debezium.connector.milvus;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
+import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
+import io.debezium.connector.milvus.metadata.CollectionMetadata;
+import io.debezium.connector.milvus.metadata.MilvusCollectionSchema;
+import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
+import io.debezium.data.Envelope;
+import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.signal.actions.snapshotting.SnapshotConfiguration;
 import io.debezium.pipeline.source.AbstractSnapshotChangeEventSource;
@@ -15,36 +27,263 @@ import io.debezium.pipeline.source.SnapshottingTask;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
 import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.spi.SnapshotResult;
+import io.debezium.relational.TableId;
+import io.debezium.util.Clock;
+import io.milvus.grpc.DataType;
 
 /**
  * Snapshot change event source for Milvus.
  *
- * <p>Performs an initial snapshot by querying Milvus collections via the SDK
- * with {@code guarantee_ts} to ensure a consistent point-in-time view aligned
- * with the streaming offset.</p>
+ * <p>
+ * Performs an initial snapshot by:
+ * <ol>
+ *   <li>Reading the etcd channel checkpoint for the pchannel to obtain the
+ *       {@code guarantee_ts} TSO and the Kafka offset to resume streaming from.</li>
+ *   <li>Storing the checkpoint Kafka offset in the {@link MilvusOffsetContext} so
+ *       the streaming source can seek to it after snapshot completion.</li>
+ *   <li>Iterating over all collections in the configured Milvus database (filtered
+ *       by the include/exclude lists in {@link MilvusConnectorConfig}).</li>
+ *   <li>For each collection: querying all rows via the Milvus v2 SDK with
+ *       {@code consistency_level=Strong} and {@code guarantee_ts = checkpoint.timestamp}.</li>
+ *   <li>Emitting each row as a Debezium {@code op=r} (read / snapshot) event through
+ *       the {@link EventDispatcher}.</li>
+ *   <li>Marking {@code snapshot_completed=true} in the offset context.</li>
+ * </ol>
+ * </p>
+ *
+ * <p>
+ * If no etcd checkpoint exists (e.g. the Milvus cluster has not yet written to the
+ * pchannel), the snapshot completes immediately without emitting any rows. The streaming
+ * source will then fall back to the LATEST Kafka position.
+ * </p>
  */
 public class MilvusSnapshotChangeEventSource
         extends AbstractSnapshotChangeEventSource<MilvusPartition, MilvusOffsetContext> {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(MilvusSnapshotChangeEventSource.class);
+
     private final MilvusConnectorConfig connectorConfig;
+    private final EtcdCheckpointReader checkpointReader;
+    private final MilvusSnapshotQueryClient queryClient;
+    private final MilvusMetadataClient metadataClient;
+    private final EventDispatcher<MilvusPartition, TableId> dispatcher;
+    private final MilvusDatabaseSchema databaseSchema;
 
     public MilvusSnapshotChangeEventSource(MilvusConnectorConfig connectorConfig,
                                            SnapshotProgressListener<MilvusPartition> snapshotProgressListener,
-                                           NotificationService<MilvusPartition, MilvusOffsetContext> notificationService) {
+                                           NotificationService<MilvusPartition, MilvusOffsetContext> notificationService,
+                                           EtcdCheckpointReader checkpointReader,
+                                           MilvusSnapshotQueryClient queryClient,
+                                           MilvusMetadataClient metadataClient,
+                                           EventDispatcher<MilvusPartition, TableId> dispatcher,
+                                           MilvusDatabaseSchema databaseSchema) {
         super(connectorConfig, snapshotProgressListener, notificationService);
         this.connectorConfig = connectorConfig;
+        this.checkpointReader = checkpointReader;
+        this.queryClient = queryClient;
+        this.metadataClient = metadataClient;
+        this.dispatcher = dispatcher;
+        this.databaseSchema = databaseSchema;
     }
 
     @Override
     protected SnapshotResult<MilvusOffsetContext> doExecute(ChangeEventSource.ChangeEventSourceContext context,
-                                                            MilvusOffsetContext offsetContext, SnapshotContext<MilvusPartition, MilvusOffsetContext> snapshotContext,
+                                                            MilvusOffsetContext offsetContext,
+                                                            SnapshotContext<MilvusPartition, MilvusOffsetContext> snapshotContext,
                                                             SnapshottingTask snapshottingTask)
             throws Exception {
-        // TODO: Implement actual snapshot query logic via Milvus SDK with guarantee_ts.
-        // For now, mark snapshot as completed so streaming can proceed.
-        MilvusOffsetContext effectiveOffsetContext = offsetContext != null ? offsetContext
-                : new MilvusOffsetContext(new MilvusSourceInfo(connectorConfig));
-        return SnapshotResult.completed(effectiveOffsetContext);
+
+        if (offsetContext == null) {
+            offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(connectorConfig));
+        }
+
+        String pchannel = snapshotContext.partition.getPchannel();
+        LOGGER.info("Starting Milvus snapshot for pchannel={}", pchannel);
+
+        Optional<ChannelCheckpoint> checkpointOpt = checkpointReader.read(pchannel);
+        if (checkpointOpt.isEmpty()) {
+            LOGGER.warn("No etcd checkpoint found for pchannel={}. "
+                    + "Completing snapshot immediately — streaming will start from LATEST.", pchannel);
+            offsetContext.markSnapshotCompleted();
+            return SnapshotResult.completed(offsetContext);
+        }
+
+        ChannelCheckpoint checkpoint = checkpointOpt.get();
+        long guaranteeTs = checkpoint.getTimestamp();
+        long kafkaOffset = checkpoint.getKafkaOffset();
+        LOGGER.info("Etcd checkpoint for pchannel={}: guaranteeTs={}, kafkaOffset={}",
+                pchannel, guaranteeTs, kafkaOffset);
+
+        offsetContext.setMqPosition(pchannel, connectorConfig.getKafkaPartitionIndex(), kafkaOffset);
+        offsetContext.setCheckpointTimestamp(guaranteeTs);
+
+        String dbName = connectorConfig.getMilvusDatabase();
+        List<CollectionMetadata> collections = metadataClient.collections();
+        List<String> includeList = connectorConfig.getCollectionIncludeList();
+        List<String> excludeList = connectorConfig.getCollectionExcludeList();
+
+        int collectionCount = 0;
+        long totalRows = 0;
+
+        for (CollectionMetadata collectionMeta : collections) {
+            if (!context.isRunning()) {
+                LOGGER.info("Snapshot interrupted after {} collections", collectionCount);
+                break;
+            }
+
+            String collectionName = collectionMeta.getName();
+            if (!isIncluded(collectionName, includeList, excludeList)) {
+                LOGGER.debug("Skipping collection {} (filtered by include/exclude list)", collectionName);
+                continue;
+            }
+
+            LOGGER.info("Snapshotting collection={} ({}/{})",
+                    collectionName, collectionCount + 1, collections.size());
+
+            long rows = snapshotCollection(context, snapshotContext.partition, offsetContext,
+                    dbName, collectionName, pchannel, guaranteeTs);
+            totalRows += rows;
+            collectionCount++;
+
+            LOGGER.info("Snapshot of collection={} complete: rows={}", collectionName, rows);
+        }
+
+        LOGGER.info("Milvus snapshot complete: collections={}, totalRows={}, guaranteeTs={}",
+                collectionCount, totalRows, guaranteeTs);
+
+        offsetContext.markSnapshotCompleted();
+
+        return SnapshotResult.completed(offsetContext);
+    }
+
+    /**
+     * Snapshot a single collection by paging through all rows and emitting each
+     * as {@code op=r}.
+     *
+     * @return the number of rows emitted
+     */
+    private long snapshotCollection(ChangeEventSource.ChangeEventSourceContext context,
+                                    MilvusPartition partition,
+                                    MilvusOffsetContext offsetContext,
+                                    String dbName,
+                                    String collectionName,
+                                    String pchannel,
+                                    long guaranteeTs)
+            throws InterruptedException {
+
+        MilvusCollectionSchema schema = metadataClient.schema(collectionName);
+        String pkFieldName = schema.getPrimaryKeyField();
+        List<String> outputFields = new ArrayList<>();
+        List<FieldDefinition> fieldDefs = new ArrayList<>();
+        DataType pkDataType = DataType.Int64;
+
+        for (MilvusCollectionSchema.FieldSchema f : schema.getFields()) {
+            outputFields.add(f.getName());
+            DataType dt = DataType.forNumber(f.getDataType());
+            if (dt == null) {
+                dt = DataType.None;
+            }
+            fieldDefs.add(new FieldDefinition(f.getName(), null, dt));
+            if (f.getName().equals(pkFieldName)) {
+                pkDataType = dt;
+            }
+        }
+
+        TableId tableId = new TableId(null, dbName, collectionName);
+        databaseSchema.registerCollection(dbName, collectionName, fieldDefs);
+
+        String[] columnNames = databaseSchema.getColumnNames(tableId);
+        if (columnNames == null || columnNames.length == 0) {
+            LOGGER.warn("No columns registered for collection={}; skipping", collectionName);
+            return 0;
+        }
+
+        String filter = MilvusSnapshotQueryClient.allRowsFilter(pkFieldName, pkDataType);
+        int batchSize = connectorConfig.getSnapshotBatchSize() > 0
+                ? connectorConfig.getSnapshotBatchSize()
+                : 1000;
+        long offset = 0;
+        long rowsEmitted = 0;
+
+        while (context.isRunning()) {
+            List<Map<String, Object>> page = queryClient.queryPage(
+                    collectionName, outputFields, filter, guaranteeTs, batchSize, offset);
+
+            if (page.isEmpty()) {
+                break;
+            }
+
+            for (Map<String, Object> rowMap : page) {
+                if (!context.isRunning()) {
+                    break;
+                }
+
+                MilvusRow row = toMilvusRow(rowMap, columnNames, fieldDefs);
+
+                offsetContext.updateForEvent(dbName, collectionName, pchannel, "", guaranteeTs);
+
+                MilvusChangeEvent.Insert snapshotInsert = new MilvusChangeEvent.Insert(
+                        collectionName, pchannel, pchannel, guaranteeTs, row);
+
+                MilvusChangeRecordEmitter emitter = new MilvusChangeRecordEmitter(
+                        partition, offsetContext, Clock.SYSTEM, connectorConfig,
+                        snapshotInsert, Envelope.Operation.READ,
+                        columnNames, pkFieldName);
+
+                dispatcher.dispatchDataChangeEvent(partition, tableId, emitter);
+                rowsEmitted++;
+            }
+
+            if (page.size() < batchSize) {
+                break;
+            }
+            offset += batchSize;
+        }
+
+        return rowsEmitted;
+    }
+
+    /**
+     * Convert a {@code Map<String, Object>} query result row into a {@link MilvusRow}.
+     *
+     * <p>Fields are ordered according to {@code columnNames} (derived from the registered
+     * schema) to guarantee stable column ordering across batches.</p>
+     */
+    private MilvusRow toMilvusRow(Map<String, Object> rowMap,
+                                  String[] columnNames,
+                                  List<FieldDefinition> fieldDefs) {
+        Map<String, DataType> typeByName = new java.util.HashMap<>(fieldDefs.size() * 2);
+        for (FieldDefinition fd : fieldDefs) {
+            typeByName.put(fd.fieldName(), fd.dataType());
+        }
+
+        String[] fieldNames = columnNames;
+        Object[] fieldValues = new Object[fieldNames.length];
+        DataType[] fieldTypes = new DataType[fieldNames.length];
+
+        for (int i = 0; i < fieldNames.length; i++) {
+            fieldValues[i] = rowMap.get(fieldNames[i]);
+            DataType dt = typeByName.getOrDefault(fieldNames[i], DataType.None);
+            fieldTypes[i] = dt != null ? dt : DataType.None;
+        }
+
+        return new MilvusRow(fieldNames, fieldValues, fieldTypes);
+    }
+
+    /**
+     * Determine whether a collection should be included in the snapshot, based on
+     * the connector's include/exclude list configuration.
+     */
+    private static boolean isIncluded(String collectionName,
+                                      List<String> includeList,
+                                      List<String> excludeList) {
+        if (excludeList != null && excludeList.contains(collectionName)) {
+            return false;
+        }
+        if (includeList != null && !includeList.isEmpty()) {
+            return includeList.contains(collectionName);
+        }
+        return true;
     }
 
     @Override
@@ -57,7 +296,6 @@ public class MilvusSnapshotChangeEventSource
     public SnapshottingTask getSnapshottingTask(MilvusPartition partition, MilvusOffsetContext offsetContext) {
         MilvusConnectorConfig.SnapshotMode snapshotMode = connectorConfig.getSnapshotMode();
 
-        // Determine whether to run snapshot based on mode and offset state
         boolean snapshotNeeded;
         switch (snapshotMode) {
             case INITIAL:

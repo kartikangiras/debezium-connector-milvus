@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.kafka.common.TopicPartition;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
+import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
+import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.doc.FixFor;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
@@ -41,6 +44,7 @@ public class MilvusStreamingChangeEventSourceTest {
     private MilvusPartition partition;
     private MilvusOffsetContext offsetContext;
     private MilvusStreamingChangeEventSource source;
+    private EtcdCheckpointReader checkpointReader;
 
     private EventDispatcher<MilvusPartition, TableId> dispatcher;
     private MilvusDatabaseSchema schema;
@@ -60,6 +64,7 @@ public class MilvusStreamingChangeEventSourceTest {
         context = mock(ChangeEventSource.ChangeEventSourceContext.class);
         partition = MilvusPartition.create("milvus-test", TOPIC);
         offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(config));
+        checkpointReader = mock(EtcdCheckpointReader.class);
 
         dispatcher = mock(EventDispatcher.class);
         schema = mock(MilvusDatabaseSchema.class);
@@ -71,12 +76,13 @@ public class MilvusStreamingChangeEventSourceTest {
 
         source = new MilvusStreamingChangeEventSource(
                 config, messageConsumer, deserializer, orderingEngine,
-                dispatcher, schema);
+                dispatcher, schema, checkpointReader);
     }
 
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldStopWhenContextNotRunning() throws InterruptedException {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         when(context.isRunning()).thenReturn(false);
 
         source.execute(context, partition, offsetContext);
@@ -87,6 +93,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldPollAndTrackOffset() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
         when(context.isRunning()).thenReturn(true, false);
@@ -102,6 +109,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldHandleEmptyPoll() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
 
@@ -113,6 +121,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldHandlePauseAndResume() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         when(context.isRunning()).thenReturn(true, true, false);
         when(context.isPaused()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
@@ -184,6 +193,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldFallbackToLatestForSnapshotHandoffWhenNoCheckpoint() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         when(context.isRunning()).thenReturn(true, false);
         when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
 
@@ -196,8 +206,29 @@ public class MilvusStreamingChangeEventSourceTest {
     }
 
     @Test
+    @FixFor("debezium/dbz#2230")
+    void shouldUseCheckpointOffsetForSnapshotHandoff() throws Exception {
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(8)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        buf.putLong(99L);
+        ChannelCheckpoint checkpoint = new ChannelCheckpoint(TOPIC, buf.array(), 440000000000L);
+        when(checkpointReader.read(TOPIC)).thenReturn(Optional.of(checkpoint));
+
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
+
+        source.execute(context, partition, offsetContext);
+
+        verify(messageConsumer).assignAndSeek(
+                Set.of(TOPIC),
+                SeekPosition.DEFAULT,
+                Map.of(new TopicPartition(TOPIC, 0), 99L));
+    }
+
+    @Test
     @FixFor("debezium/dbz#2068")
     void shouldDeserializeAndBufferEvents() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
         MilvusRow insertRow = new MilvusRow(
@@ -229,6 +260,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldDispatchInsertEventThroughPipeline() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
         MilvusRow insertRow = new MilvusRow(
@@ -265,6 +297,7 @@ public class MilvusStreamingChangeEventSourceTest {
     @Test
     @FixFor("debezium/dbz#2068")
     void shouldSkipEventsWithNoCollectionName() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
         RawMilvusMessage msg = new RawMilvusMessage(TOPIC, 0, 1L, null, "payload".getBytes(), 0L);
 
         MilvusRow insertRow = new MilvusRow(
