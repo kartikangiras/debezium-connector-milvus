@@ -10,12 +10,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
+import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
@@ -53,13 +56,15 @@ public class MilvusStreamingChangeEventSource
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
     private final MilvusDatabaseSchema databaseSchema;
     private final Duration pollTimeout;
+    private final EtcdCheckpointReader checkpointReader;
 
     public MilvusStreamingChangeEventSource(MilvusConnectorConfig connectorConfig,
                                             MilvusMessageConsumer messageConsumer,
                                             MilvusProtoDeserializer deserializer,
                                             TimetickOrderingEngine orderingEngine,
                                             EventDispatcher<MilvusPartition, TableId> dispatcher,
-                                            MilvusDatabaseSchema databaseSchema) {
+                                            MilvusDatabaseSchema databaseSchema,
+                                            EtcdCheckpointReader checkpointReader) {
         this.connectorConfig = connectorConfig;
         this.messageConsumer = messageConsumer;
         this.deserializer = deserializer;
@@ -67,6 +72,7 @@ public class MilvusStreamingChangeEventSource
         this.dispatcher = dispatcher;
         this.databaseSchema = databaseSchema;
         this.pollTimeout = Duration.ofMillis(connectorConfig.getPollIntervalMs());
+        this.checkpointReader = checkpointReader;
     }
 
     @Override
@@ -358,12 +364,33 @@ public class MilvusStreamingChangeEventSource
      * Resolve checkpoint offsets for snapshot-to-streaming handoff.
      *
      * <p>
-     * TODO: Wire up EtcdCheckpointReader when the snapshot source is
-     * implemented. Returns {@code null} causing the caller to fall back
-     * to {@link SeekPosition#EARLIEST}.
+     * Reads the etcd channel checkpoint for the given pchannel. If a checkpoint
+     * exists, returns a map with the Kafka {@link TopicPartition} → offset so the
+     * consumer can seek to the exact position corresponding to the snapshot's
+     * {@code guarantee_ts}. Returns {@code null} when no checkpoint is found,
+     * causing the caller to fall back to {@link SeekPosition#LATEST}.
      * </p>
      */
     private Map<TopicPartition, Long> resolveCheckpointOffsets(String pchannel) {
-        return null;
+        if (checkpointReader == null) {
+            return null;
+        }
+        try {
+            Optional<ChannelCheckpoint> checkpointOpt = checkpointReader.read(pchannel);
+            if (checkpointOpt.isEmpty()) {
+                return null;
+            }
+            ChannelCheckpoint checkpoint = checkpointOpt.get();
+            long kafkaOffset = checkpoint.getKafkaOffset();
+            TopicPartition tp = new TopicPartition(pchannel, connectorConfig.getKafkaPartitionIndex());
+            LOGGER.info("Resolved checkpoint offset for pchannel={}: kafkaOffset={}, guaranteeTs={}",
+                    pchannel, kafkaOffset, checkpoint.getTimestamp());
+            return Map.of(tp, kafkaOffset);
+        }
+        catch (Exception e) {
+            LOGGER.warn("Failed to resolve checkpoint offsets for pchannel={}: {}",
+                    pchannel, e.getMessage(), e);
+            return null;
+        }
     }
 }

@@ -16,11 +16,17 @@ import io.debezium.snapshot.spi.SnapshotQuery;
 import io.debezium.spi.snapshot.Snapshotter;
 
 /**
- * No-op snapshotter for the Milvus connector.
+ * Snapshotter for the Milvus connector.
  *
- * <p>Skips data and schema snapshots, allowing the connector to start
- * streaming immediately. A full snapshot implementation will be added
- * when the Milvus SDK query layer is integrated.</p>
+ * <p>Triggers a data snapshot when no prior offset exists (fresh connector start)
+ * or when a snapshot is already in progress (resumed after a crash mid-snapshot).
+ * The second gate — {@link MilvusSnapshotChangeEventSource#getSnapshottingTask} —
+ * respects the configured {@code snapshot.mode} (e.g. {@code never}) and whether
+ * the offset context already has {@code snapshot_completed=true}.</p>
+ *
+ * <p>Schema snapshot is deliberately skipped: Milvus schemas are inferred
+ * dynamically from the first Insert event (streaming) or from the Milvus
+ * metadata API (snapshot), so no separate DDL-style schema snapshot is needed.</p>
  */
 public class MilvusSnapshotter implements Snapshotter {
 
@@ -35,7 +41,7 @@ public class MilvusSnapshotter implements Snapshotter {
 
     @Override
     public boolean shouldSnapshotData(boolean offsetExists, boolean snapshotInProgress) {
-        return false;
+        return !offsetExists || snapshotInProgress;
     }
 
     @Override

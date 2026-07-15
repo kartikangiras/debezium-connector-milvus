@@ -5,6 +5,8 @@
  */
 package io.debezium.connector.milvus;
 
+import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
+import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.source.spi.ChangeEventSourceFactory;
@@ -19,26 +21,47 @@ import io.debezium.relational.TableId;
  * {@link KafkaMilvusMessageConsumer} → {@link MilvusProtoDeserializer} →
  * {@link TimetickOrderingEngine} → {@link MilvusStreamingChangeEventSource},
  * wired with the {@link EventDispatcher} and {@link MilvusDatabaseSchema}.</p>
+ *
+ * <p>Passes the shared {@link EtcdCheckpointReader} to both the snapshot
+ * source (for reading {@code guarantee_ts}) and the streaming source (for
+ * resolving the Kafka offset for snapshot-to-streaming handoff).</p>
  */
 public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<MilvusPartition, MilvusOffsetContext> {
 
     private final MilvusConnectorConfig connectorConfig;
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
     private final MilvusDatabaseSchema schema;
+    private final EtcdCheckpointReader checkpointReader;
+    private final MilvusSnapshotQueryClient snapshotQueryClient;
+    private final MilvusMetadataClient metadataClient;
 
     public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
                                           EventDispatcher<MilvusPartition, TableId> dispatcher,
-                                          MilvusDatabaseSchema schema) {
+                                          MilvusDatabaseSchema schema,
+                                          EtcdCheckpointReader checkpointReader,
+                                          MilvusSnapshotQueryClient snapshotQueryClient,
+                                          MilvusMetadataClient metadataClient) {
         this.connectorConfig = connectorConfig;
         this.dispatcher = dispatcher;
         this.schema = schema;
+        this.checkpointReader = checkpointReader;
+        this.snapshotQueryClient = snapshotQueryClient;
+        this.metadataClient = metadataClient;
     }
 
     @Override
     public MilvusSnapshotChangeEventSource getSnapshotChangeEventSource(
                                                                         SnapshotProgressListener<MilvusPartition> snapshotProgressListener,
                                                                         NotificationService<MilvusPartition, MilvusOffsetContext> notificationService) {
-        return new MilvusSnapshotChangeEventSource(connectorConfig, snapshotProgressListener, notificationService);
+        return new MilvusSnapshotChangeEventSource(
+                connectorConfig,
+                snapshotProgressListener,
+                notificationService,
+                checkpointReader,
+                snapshotQueryClient,
+                metadataClient,
+                dispatcher,
+                schema);
     }
 
     @Override
@@ -50,6 +73,6 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         TimetickOrderingEngine orderingEngine = new TimetickOrderingEngine(connectorConfig);
         return new MilvusStreamingChangeEventSource(
                 connectorConfig, messageConsumer, deserializer, orderingEngine,
-                dispatcher, schema);
+                dispatcher, schema, checkpointReader);
     }
 }
