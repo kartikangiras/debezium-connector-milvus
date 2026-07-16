@@ -62,7 +62,6 @@ public class MilvusConnector extends BaseSourceConnector {
     @Override
     public void stop() {
         LOGGER.info("Stopping Milvus connector");
-        // TODO: close MetadataClient, Connection, or other opened resources
     }
 
     @Override
@@ -72,6 +71,6 @@ public class MilvusConnector extends BaseSourceConnector {
 
     @Override
     protected Map<String, ConfigValue> validateAllFields(Configuration config) {
-        return Map.of();
+        return config.validate(MilvusConnectorConfig.ALL_FIELDS);
     }
 }
