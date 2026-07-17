@@ -8,10 +8,12 @@ package io.debezium.connector.milvus;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -319,27 +321,53 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         start(MilvusConnector.class, connectorConfig());
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
 
+        long entityId = System.nanoTime();
+
         milvusClient.insert(InsertReq.builder()
                 .collectionName(collectionName)
-                .data(Collections.singletonList(rowWithIdAndTitle(42L, "hello")))
+                .data(Collections.singletonList(rowWithIdAndTitle(entityId, "hello")))
                 .build());
 
         milvusClient.delete(DeleteReq.builder()
                 .collectionName(collectionName)
-                .ids(Collections.singletonList(42L))
+                .ids(Collections.singletonList(entityId))
                 .build());
 
         String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
                 + "." + collectionName;
-        var records = consumeRecordsByTopic(2);
-        List<SourceRecord> topicRecords = records.recordsForTopic(expectedTopic);
+
+        // Poll deterministically until both the insert and the delete record have
+        // arrived on the expected topic. consumeRecordsByTopic(2) can return early in
+        // CI when the delete event is delayed, leaving recordsForTopic() as null.
+        //
+        // Note: we accumulate into a plain ArrayList rather than instantiating the
+        // protected AbstractConnectorTest.SourceRecords inner class directly. That
+        // class' implicit constructor is not visible from this connector package,
+        // and the Eclipse compiler (ecj, used for stale incremental .class files)
+        // rejects 'new SourceRecords()' with "constructor not visible", embedding a
+        // runtime 'Unresolved compilation problem' into the bytecode. Using a local
+        // list avoids the cross-package protected-inner-class instantiation entirely.
+        List<SourceRecord> allRecords = new ArrayList<>();
+        Awaitility.await("insert and delete records on topic " + expectedTopic)
+                .atMost(Duration.ofSeconds(20))
+                .pollInterval(Duration.ofMillis(200))
+                .untilAsserted(() -> {
+                    consumeAvailableRecordsByTopic().allRecordsInOrder().forEach(allRecords::add);
+                    List<SourceRecord> topicRecords = recordsForTopic(allRecords, expectedTopic);
+                    assertThat(topicRecords)
+                            .withFailMessage("Expected 2 records on topic %s, got records=%s",
+                                    expectedTopic, allRecords)
+                            .hasSize(2);
+                });
+
+        List<SourceRecord> topicRecords = recordsForTopic(allRecords, expectedTopic);
         assertThat(topicRecords).hasSize(2);
 
         SourceRecord insertRecord = topicRecords.get(0);
         Struct insertValue = (Struct) insertRecord.value();
         assertThat(insertValue.getString("op")).isEqualTo("c");
         Struct insertAfter = insertValue.getStruct("after");
-        assertThat(insertAfter.get("id")).isEqualTo(42L);
+        assertThat(insertAfter.get("id")).isEqualTo(entityId);
         assertThat(insertAfter.get("title")).isEqualTo("hello");
         Struct insertSource = insertValue.getStruct("source");
         assertThat(insertSource.getString("collection")).isEqualTo(collectionName);
@@ -353,6 +381,7 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
 
         Struct deleteBefore = deleteValue.getStruct("before");
         assertThat(deleteBefore).isNotNull();
+        assertThat(deleteBefore.get("id")).isEqualTo(entityId);
     }
 
     @Test
@@ -408,5 +437,17 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         @SuppressWarnings("unchecked")
         List<Float> embedding = (List<Float>) after.get("embedding");
         assertThat(embedding).containsExactly(1.5f, 2.5f, 3.5f, 4.5f);
+    }
+
+    /**
+     * Filter the accumulated records down to those belonging to the given topic,
+     * preserving arrival order. This replaces the now-inaccessible
+     * {@code AbstractConnectorTest.SourceRecords#recordsForTopic(String)} helper
+     * (whose constructor is not visible from this connector package).
+     */
+    private static List<SourceRecord> recordsForTopic(List<SourceRecord> records, String topicName) {
+        return records.stream()
+                .filter(r -> topicName.equals(r.topic()))
+                .collect(Collectors.toList());
     }
 }
