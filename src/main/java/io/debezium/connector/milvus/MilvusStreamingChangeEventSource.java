@@ -171,6 +171,13 @@ public class MilvusStreamingChangeEventSource
                 orderingEngine.getGlobalWatermark());
     }
 
+    @Override
+    public void close() {
+        if (messageConsumer != null) {
+            messageConsumer.close();
+        }
+    }
+
     /**
      * Process raw messages: deserialize and route to the ordering engine.
      */
