@@ -86,7 +86,7 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
 
     public static final Field MILVUS_TOKEN = Field.create("milvus.token")
             .withDisplayName("Milvus Token")
-            .withType(Type.STRING)
+            .withType(Type.PASSWORD)
             .withWidth(Width.MEDIUM)
             .withImportance(Importance.MEDIUM)
             .withDescription("Authentication token for Milvus. Optional.");
