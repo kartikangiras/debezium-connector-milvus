@@ -64,7 +64,7 @@ public class KafkaMilvusMessageConsumer implements MilvusMessageConsumer {
 
     private final MilvusConnectorConfig config;
     private KafkaConsumer<?, ?> kafkaConsumer;
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
     public KafkaMilvusMessageConsumer(MilvusConnectorConfig config) {
         this.config = Objects.requireNonNull(config, "config must not be null");
