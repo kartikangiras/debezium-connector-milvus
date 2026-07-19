@@ -25,14 +25,42 @@ public class MilvusEventMetadataProvider implements EventMetadataProvider {
     @Override
     public Instant getEventTimestamp(DataCollectionId source, OffsetContext offset,
                                      Object key, Struct value) {
-        return Instant.now();
+        if (value == null) {
+            return null;
+        }
+        Struct sourceStruct = value.getStruct(io.debezium.data.Envelope.FieldName.SOURCE);
+        if (sourceStruct == null) {
+            return null;
+        }
+        Long tsMs = sourceStruct.getInt64(io.debezium.connector.AbstractSourceInfo.TIMESTAMP_KEY);
+        return tsMs != null ? Instant.ofEpochMilli(tsMs) : null;
     }
 
     @Override
     public Map<String, String> getEventSourcePosition(DataCollectionId source,
                                                       OffsetContext offset,
                                                       Object key, Struct value) {
-        return Map.of();
+        if (value == null) {
+            return Map.of();
+        }
+        Struct sourceStruct = value.getStruct(io.debezium.data.Envelope.FieldName.SOURCE);
+        if (sourceStruct == null) {
+            return Map.of();
+        }
+        Map<String, String> position = new java.util.LinkedHashMap<>();
+        Long tso = sourceStruct.getInt64("tso");
+        if (tso != null) {
+            position.put("tso", tso.toString());
+        }
+        String pchannel = sourceStruct.getString("pchannel");
+        if (pchannel != null) {
+            position.put("pchannel", pchannel);
+        }
+        String vchannel = sourceStruct.getString("vchannel");
+        if (vchannel != null) {
+            position.put("vchannel", vchannel);
+        }
+        return position;
     }
 
     @Override
