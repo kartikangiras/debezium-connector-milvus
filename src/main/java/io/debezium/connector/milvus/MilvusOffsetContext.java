@@ -125,7 +125,18 @@ public class MilvusOffsetContext extends CommonOffsetContext<MilvusSourceInfo> {
         sourceInfo.setPchannel(pchannel);
         sourceInfo.setVchannel(vchannel);
         sourceInfo.setTso(tso);
-        sourceInfo.setTimestamp(java.time.Instant.now());
+        sourceInfo.setTimestamp(tsoToInstant(tso));
+    }
+
+    /**
+     * Convert a Milvus HLC TSO to a wall-clock Instant.
+     * <p>
+     * Milvus TSO is a Hybrid Logical Clock: the high 46 bits encode
+     * physical milliseconds since the Unix epoch, and the low 18 bits are
+     * a logical counter for ordering within the same millisecond.
+     */
+    static Instant tsoToInstant(long tso) {
+        return Instant.ofEpochMilli(tso >> 18);
     }
 
     public boolean isSnapshotCompleted() {
