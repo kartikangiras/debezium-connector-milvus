@@ -59,8 +59,7 @@ public class JetcdEtcdCheckpointReader implements EtcdCheckpointReader {
                     .build();
         }
         catch (Exception e) {
-            throw new DebeziumException("Failed to create etcd checkpoint reader for endpoints "
-                    + config.getEtcdEndpoints(), e);
+            throw new DebeziumException("Failed to create etcd checkpoint reader", e);
         }
     }
 
