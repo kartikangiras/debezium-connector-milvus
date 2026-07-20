@@ -53,7 +53,7 @@ public class JetcdEtcdCheckpointReaderTest {
     private KeyValue keyValue;
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldReturnCheckpointWhenKeyExists() throws Exception {
         Msg.MsgPosition position = Msg.MsgPosition.newBuilder()
                 .setMsgID(ByteString.copyFromUtf8("12345"))
@@ -78,7 +78,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldReturnEmptyWhenKeyMissing() throws Exception {
         when(client.getKVClient()).thenReturn(kv);
         when(kv.get(any(ByteSequence.class))).thenReturn(CompletableFuture.completedFuture(response));
@@ -92,7 +92,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldThrowOnInvalidProtobufValue() throws Exception {
         when(client.getKVClient()).thenReturn(kv);
         when(kv.get(any(ByteSequence.class))).thenReturn(CompletableFuture.completedFuture(response));
@@ -107,7 +107,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldWrapEtcdFailureInDebeziumException() throws Exception {
         when(client.getKVClient()).thenReturn(kv);
         when(kv.get(any(ByteSequence.class)))
@@ -121,7 +121,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldReportAccessibleWhenEtcdResponds() throws Exception {
         when(client.getKVClient()).thenReturn(kv);
         when(kv.get(any(ByteSequence.class))).thenReturn(CompletableFuture.completedFuture(response));
@@ -132,7 +132,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldReportInaccessibleWhenEtcdFails() throws Exception {
         when(client.getKVClient()).thenReturn(kv);
         when(kv.get(any(ByteSequence.class)))
@@ -144,7 +144,7 @@ public class JetcdEtcdCheckpointReaderTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldCloseClient() {
         JetcdEtcdCheckpointReader reader = new JetcdEtcdCheckpointReader(client, CHECKPOINT_TEMPLATE, TIMEOUT_MS);
         reader.close();

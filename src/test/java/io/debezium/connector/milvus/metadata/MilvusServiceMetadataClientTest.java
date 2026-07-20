@@ -42,7 +42,7 @@ public class MilvusServiceMetadataClientTest {
     private MilvusServiceClient serviceClient;
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldListCollections() {
         ShowCollectionsResponse response = ShowCollectionsResponse.newBuilder()
                 .setStatus(successStatus())
@@ -68,7 +68,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldReturnEmptyCollectionsWhenResponseDataIsNull() {
         when(serviceClient.showCollections(any())).thenReturn(R.success(null));
 
@@ -78,7 +78,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldReturnSchemaForCollection() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(successStatus())
@@ -118,7 +118,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldExtractVectorDimensionFromTypeParams() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(successStatus())
@@ -144,7 +144,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldReturnChannelsForCollection() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(successStatus())
@@ -171,7 +171,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldFallBackToLastPhysicalChannelWhenSizesDiffer() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(successStatus())
@@ -193,7 +193,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldCheckReachable() {
         ListDatabasesResponse response = ListDatabasesResponse.newBuilder()
                 .setStatus(successStatus())
@@ -206,7 +206,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldReportUnreachableOnException() {
         when(serviceClient.listDatabases()).thenThrow(new RuntimeException("connection refused"));
 
@@ -216,7 +216,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldCheckDatabaseExists() {
         ListDatabasesResponse response = ListDatabasesResponse.newBuilder()
                 .setStatus(successStatus())
@@ -231,7 +231,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldReportDatabaseDoesNotExist() {
         ListDatabasesResponse response = ListDatabasesResponse.newBuilder()
                 .setStatus(successStatus())
@@ -245,7 +245,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldFindCollectionByName() {
         ShowCollectionsResponse response = ShowCollectionsResponse.newBuilder()
                 .setStatus(successStatus())
@@ -264,7 +264,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldThrowCollectionNotFoundWhenDescribeFailsWithCollectionNotExists() {
         when(serviceClient.describeCollection(any())).thenReturn(R.failed(ErrorCode.CollectionNotExists, "collection not found"));
 
@@ -276,7 +276,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldThrowDebeziumExceptionWhenApiReturnsErrorStatus() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(Status.newBuilder()
@@ -294,7 +294,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldThrowWhenSchemaResponseHasNoSchema() {
         DescribeCollectionResponse response = DescribeCollectionResponse.newBuilder()
                 .setStatus(successStatus())
@@ -313,7 +313,7 @@ public class MilvusServiceMetadataClientTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2130")
     void shouldCloseServiceClient() throws InterruptedException {
         MilvusServiceMetadataClient client = new MilvusServiceMetadataClient(serviceClient, DATABASE);
         client.close();
