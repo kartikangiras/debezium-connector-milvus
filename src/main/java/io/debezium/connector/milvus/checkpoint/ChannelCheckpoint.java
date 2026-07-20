@@ -8,6 +8,7 @@ package io.debezium.connector.milvus.checkpoint;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
+import java.util.Objects;
 
 import milvus.proto.msg.Msg.MsgPosition;
 
@@ -29,7 +30,7 @@ public class ChannelCheckpoint {
 
     public ChannelCheckpoint(String pchannel, byte[] msgId, long timestamp) {
         this.pchannel = pchannel;
-        this.msgId = msgId != null ? msgId.clone() : null;
+        this.msgId = msgId;
         this.timestamp = timestamp;
     }
 
@@ -43,7 +44,7 @@ public class ChannelCheckpoint {
      * resume.
      */
     public byte[] getMsgId() {
-        return msgId != null ? msgId.clone() : null;
+        return msgId;
     }
 
     /**
@@ -105,13 +106,13 @@ public class ChannelCheckpoint {
         }
         ChannelCheckpoint that = (ChannelCheckpoint) o;
         return timestamp == that.timestamp
-                && java.util.Objects.equals(pchannel, that.pchannel)
+                && Objects.equals(pchannel, that.pchannel)
                 && Arrays.equals(msgId, that.msgId);
     }
 
     @Override
     public int hashCode() {
-        int result = java.util.Objects.hash(pchannel, timestamp);
+        int result = Objects.hash(pchannel, timestamp);
         result = 31 * result + Arrays.hashCode(msgId);
         return result;
     }
