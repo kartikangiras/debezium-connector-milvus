@@ -6,10 +6,13 @@
 package io.debezium.connector.milvus;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.apache.kafka.connect.data.Struct;
 
+import io.debezium.connector.AbstractSourceInfo;
+import io.debezium.data.Envelope;
 import io.debezium.pipeline.source.spi.EventMetadataProvider;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.spi.schema.DataCollectionId;
@@ -28,11 +31,11 @@ public class MilvusEventMetadataProvider implements EventMetadataProvider {
         if (value == null) {
             return null;
         }
-        Struct sourceStruct = value.getStruct(io.debezium.data.Envelope.FieldName.SOURCE);
+        Struct sourceStruct = value.getStruct(Envelope.FieldName.SOURCE);
         if (sourceStruct == null) {
             return null;
         }
-        Long tsMs = sourceStruct.getInt64(io.debezium.connector.AbstractSourceInfo.TIMESTAMP_KEY);
+        Long tsMs = sourceStruct.getInt64(AbstractSourceInfo.TIMESTAMP_KEY);
         return tsMs != null ? Instant.ofEpochMilli(tsMs) : null;
     }
 
@@ -43,11 +46,11 @@ public class MilvusEventMetadataProvider implements EventMetadataProvider {
         if (value == null) {
             return Map.of();
         }
-        Struct sourceStruct = value.getStruct(io.debezium.data.Envelope.FieldName.SOURCE);
+        Struct sourceStruct = value.getStruct(Envelope.FieldName.SOURCE);
         if (sourceStruct == null) {
             return Map.of();
         }
-        Map<String, String> position = new java.util.LinkedHashMap<>();
+        Map<String, String> position = new LinkedHashMap<>();
         Long tso = sourceStruct.getInt64("tso");
         if (tso != null) {
             position.put("tso", tso.toString());

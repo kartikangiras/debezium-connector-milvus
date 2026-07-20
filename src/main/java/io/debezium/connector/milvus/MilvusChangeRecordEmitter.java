@@ -5,6 +5,10 @@
  */
 package io.debezium.connector.milvus;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.spi.OffsetContext;
 import io.debezium.relational.RelationalChangeRecordEmitter;
@@ -64,7 +68,7 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
             for (int i = 0; i < columnNames.length; i++) {
                 if (columnNames[i].equals(pkFieldName)) {
                     Object pks = delete.getPrimaryKeys();
-                    if (pks instanceof java.util.List<?> list && !list.isEmpty()) {
+                    if (pks instanceof List<?> list && !list.isEmpty()) {
                         values[i] = list.get(0);
                     }
                     else {
@@ -99,7 +103,7 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
             }
             String[] rowNames = row.getFieldNames();
             Object[] rowValues = row.getFieldValues();
-            java.util.Map<String, Object> byName = new java.util.HashMap<>(rowNames.length * 2);
+            Map<String, Object> byName = new HashMap<>(rowNames.length * 2);
             for (int i = 0; i < rowNames.length; i++) {
                 byName.put(rowNames[i], rowValues[i]);
             }

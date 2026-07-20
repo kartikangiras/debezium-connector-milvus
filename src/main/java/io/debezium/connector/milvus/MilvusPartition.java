@@ -6,6 +6,8 @@
 package io.debezium.connector.milvus;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -75,10 +77,10 @@ public class MilvusPartition extends AbstractPartition {
 
     public static class Provider implements Partition.Provider<MilvusPartition> {
 
-        private final java.util.List<MilvusPartition> partitions;
+        private final List<MilvusPartition> partitions;
 
         public Provider(MilvusConnectorConfig connectorConfig,
-                        java.util.List<String> pchannelNames) {
+                        List<String> pchannelNames) {
             String logicalName = connectorConfig.getLogicalName();
             this.partitions = pchannelNames.stream()
                     .sorted()
@@ -88,10 +90,10 @@ public class MilvusPartition extends AbstractPartition {
 
         @Override
         public Set<MilvusPartition> getPartitions() {
-            return Collections.unmodifiableSet(new java.util.LinkedHashSet<>(partitions));
+            return Collections.unmodifiableSet(new LinkedHashSet<>(partitions));
         }
 
-        public java.util.List<MilvusPartition> getPartitionList() {
+        public List<MilvusPartition> getPartitionList() {
             return Collections.unmodifiableList(partitions);
         }
     }

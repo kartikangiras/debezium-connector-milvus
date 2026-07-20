@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 
 import io.debezium.DebeziumException;
 import io.debezium.connector.milvus.MilvusConnectorConfig;
+import io.debezium.util.Strings;
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.CollectionSchema;
 import io.milvus.grpc.DescribeCollectionResponse;
@@ -65,7 +66,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
             this.client = new MilvusServiceClient(builder.build());
         }
         catch (Exception e) {
-            throw new DebeziumException("Failed to create Milvus metadata client for URI " + config.getMilvusUri(), e);
+            throw new DebeziumException("Failed to create Milvus metadata client", e);
         }
     }
 
@@ -85,7 +86,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
                 .build();
 
         R<ShowCollectionsResponse> response = client.showCollections(param);
-        throwOnFailure("list collections", response);
+        throwOnFailure("list collections", response, null);
 
         ShowCollectionsResponse data = response.getData();
         if (data == null) {
@@ -179,7 +180,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
     @Override
     public boolean databaseExists() {
         R<ListDatabasesResponse> response = client.listDatabases();
-        throwOnFailure("list databases", response);
+        throwOnFailure("list databases", response, null);
 
         ListDatabasesResponse data = response.getData();
         return data != null && data.getDbNamesList().contains(databaseName);
@@ -211,7 +212,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
                 .build();
 
         R<DescribeCollectionResponse> response = client.describeCollection(param);
-        throwOnFailure("describe collection " + collection, response);
+        throwOnFailure("describe collection " + collection, response, collection);
 
         DescribeCollectionResponse data = response.getData();
         if (data == null) {
@@ -220,9 +221,12 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
         return data;
     }
 
-    private static void throwOnFailure(String operation, R<?> response) {
+    @SuppressWarnings("deprecation")
+    private static void throwOnFailure(String operation, R<?> response, String collectionName) {
+        String effectiveName = Strings.defaultIfEmpty(collectionName, operation);
+
         if (response.getStatus() != null && response.getStatus() == ErrorCode.CollectionNotExists.getNumber()) {
-            throw new CollectionNotFoundException(collectionNameFrom(operation),
+            throw new CollectionNotFoundException(effectiveName,
                     new IllegalStateException(response.getMessage()));
         }
 
@@ -230,7 +234,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
         Status status = extractStatus(data);
 
         if (status != null && status.getErrorCode() == ErrorCode.CollectionNotExists) {
-            throw new CollectionNotFoundException(collectionNameFrom(operation),
+            throw new CollectionNotFoundException(effectiveName,
                     new IllegalStateException(status.getReason()));
         }
 
@@ -244,7 +248,7 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
 
         if (status != null && status.getErrorCode() != ErrorCode.Success) {
             throw new DebeziumException("Milvus API returned error during " + operation +
-                    ": " + status.getErrorCode() + " — " + status.getReason());
+                    ": " + status.getErrorCode() + ": " + status.getReason());
         }
     }
 
@@ -259,14 +263,6 @@ public class MilvusServiceMetadataClient implements MilvusMetadataClient {
             return r.getStatus();
         }
         return null;
-    }
-
-    private static String collectionNameFrom(String operation) {
-        String prefix = "describe collection ";
-        if (operation.startsWith(prefix)) {
-            return operation.substring(prefix.length());
-        }
-        return operation;
     }
 
     private static int extractDimension(FieldSchema field) {
