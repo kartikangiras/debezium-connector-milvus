@@ -23,7 +23,7 @@ import milvus.proto.msg.Msg;
 public class ChannelCheckpointTest {
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldCreateCheckpointFromMsgPosition() {
         Msg.MsgPosition position = Msg.MsgPosition.newBuilder()
                 .setChannelName("by-dev-rootcoord-dml_0")
@@ -39,8 +39,8 @@ public class ChannelCheckpointTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
-    void shouldDefensivelyCopyMsgId() {
+    @FixFor("debezium/dbz#2131")
+    void shouldNotDefensivelyCopyMsgId() {
         byte[] original = { 1, 2, 3, 4 };
         ChannelCheckpoint checkpoint = new ChannelCheckpoint("pchannel", original, 100L);
 
@@ -48,11 +48,11 @@ public class ChannelCheckpointTest {
         first[0] = 99;
         byte[] second = checkpoint.getMsgId();
 
-        assertThat(second[0]).isEqualTo((byte) 1);
+        assertThat(second[0]).isEqualTo((byte) 99);
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldDecodeEightByteLittleEndianOffset() {
         byte[] msgId = ByteBuffer.allocate(8)
                 .order(ByteOrder.LITTLE_ENDIAN)
@@ -64,7 +64,7 @@ public class ChannelCheckpointTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldDecodeStringOffset() {
         ChannelCheckpoint checkpoint = new ChannelCheckpoint(
                 "pchannel",
@@ -75,7 +75,7 @@ public class ChannelCheckpointTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldThrowOnNullMsgId() {
         ChannelCheckpoint checkpoint = new ChannelCheckpoint("pchannel", null, 100L);
 
@@ -85,7 +85,7 @@ public class ChannelCheckpointTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldThrowOnUndecodableOffset() {
         ChannelCheckpoint checkpoint = new ChannelCheckpoint(
                 "pchannel",
@@ -98,7 +98,7 @@ public class ChannelCheckpointTest {
     }
 
     @Test
-    @FixFor("debezium/dbz#2068")
+    @FixFor("debezium/dbz#2131")
     void shouldImplementEqualsAndHashCode() {
         byte[] msgId = { 1, 2, 3 };
         ChannelCheckpoint a = new ChannelCheckpoint("pchannel", msgId, 100L);
