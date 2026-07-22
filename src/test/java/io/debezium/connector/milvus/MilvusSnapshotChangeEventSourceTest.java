@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -33,9 +34,11 @@ import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.CollectionMetadata;
 import io.debezium.connector.milvus.metadata.MilvusCollectionSchema;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
+import io.debezium.connector.milvus.metadata.VChannelMetadata;
 import io.debezium.data.Envelope;
 import io.debezium.doc.FixFor;
 import io.debezium.pipeline.EventDispatcher;
+import io.debezium.pipeline.notification.InitialSnapshotNotificationService;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.source.SnapshottingTask;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
@@ -76,6 +79,10 @@ public class MilvusSnapshotChangeEventSourceTest {
     @Mock
     private NotificationService<MilvusPartition, MilvusOffsetContext> notificationService;
 
+    @SuppressWarnings("unchecked")
+    @Mock
+    private InitialSnapshotNotificationService<MilvusPartition, MilvusOffsetContext> initialSnapshotNotificationService;
+
     @Mock
     private ChangeEventSource.ChangeEventSourceContext context;
 
@@ -93,6 +100,9 @@ public class MilvusSnapshotChangeEventSourceTest {
         connectorConfig = new MilvusConnectorConfig(configuration);
         partition = MilvusPartition.create("milvus-test", PCHANNEL);
         offsetContext = new MilvusOffsetContext(new MilvusSourceInfo(connectorConfig));
+
+        lenient().when(notificationService.initialSnapshotNotificationService())
+                .thenReturn(initialSnapshotNotificationService);
 
         source = new MilvusSnapshotChangeEventSource(
                 connectorConfig,
@@ -198,6 +208,72 @@ public class MilvusSnapshotChangeEventSourceTest {
         for (MilvusChangeRecordEmitter emitter : emitterCaptor.getAllValues()) {
             assertThat(emitter.getOperation()).isEqualTo(Envelope.Operation.READ);
         }
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2230")
+    void shouldResolveVchannelFromMetadataNotReusePchannel() throws Exception {
+        ChannelCheckpoint checkpoint = buildCheckpoint(GUARANTEE_TS, KAFKA_OFFSET);
+        when(checkpointReader.read(PCHANNEL)).thenReturn(Optional.of(checkpoint));
+
+        CollectionMetadata collMeta = new CollectionMetadata("my_coll", 1L, 0, 0L);
+        when(metadataClient.collections()).thenReturn(List.of(collMeta));
+
+        MilvusCollectionSchema schema = buildSchema("my_coll", "id");
+        when(metadataClient.schema("my_coll")).thenReturn(schema);
+        when(metadataClient.channels("my_coll")).thenReturn(List.of(
+                new VChannelMetadata("my_coll-v0", PCHANNEL, "my_coll", 1L)));
+
+        Map<String, Object> row1 = Map.of("id", 1L, "vec", new float[]{ 0.1f, 0.2f });
+
+        when(databaseSchema.registerCollection(anyString(), anyString(), any())).thenReturn(true);
+        when(databaseSchema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id", "vec" });
+        when(context.isRunning()).thenReturn(true);
+        when(queryClient.queryPage(anyString(), any(), anyString(), anyLong(), anyInt(), eq(0L)))
+                .thenReturn(List.of(row1));
+        when(dispatcher.dispatchDataChangeEvent(any(), any(), any())).thenReturn(true);
+
+        invokeDoExecute();
+
+        ArgumentCaptor<MilvusChangeRecordEmitter> emitterCaptor = ArgumentCaptor.forClass(MilvusChangeRecordEmitter.class);
+        verify(dispatcher).dispatchDataChangeEvent(
+                eq(partition), any(TableId.class), emitterCaptor.capture());
+
+        MilvusChangeRecordEmitter emitter = emitterCaptor.getValue();
+        assertThat(emitter.getChangeEvent().getVchannel()).isEqualTo("my_coll-v0");
+        assertThat(emitter.getChangeEvent().getVchannel()).isNotEqualTo(PCHANNEL);
+        assertThat(emitter.getChangeEvent().getPchannel()).isEqualTo(PCHANNEL);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2230")
+    void shouldReportSnapshotProgressAndNotifications() throws Exception {
+        ChannelCheckpoint checkpoint = buildCheckpoint(GUARANTEE_TS, KAFKA_OFFSET);
+        when(checkpointReader.read(PCHANNEL)).thenReturn(Optional.of(checkpoint));
+
+        CollectionMetadata collMeta = new CollectionMetadata("my_coll", 1L, 0, 0L);
+        when(metadataClient.collections()).thenReturn(List.of(collMeta));
+
+        MilvusCollectionSchema schema = buildSchema("my_coll", "id");
+        when(metadataClient.schema("my_coll")).thenReturn(schema);
+        when(metadataClient.channels("my_coll")).thenReturn(List.of());
+
+        Map<String, Object> row1 = Map.of("id", 1L, "vec", new float[]{ 0.1f, 0.2f });
+
+        when(databaseSchema.registerCollection(anyString(), anyString(), any())).thenReturn(true);
+        when(databaseSchema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id", "vec" });
+        when(context.isRunning()).thenReturn(true);
+        when(queryClient.queryPage(anyString(), any(), anyString(), anyLong(), anyInt(), eq(0L)))
+                .thenReturn(List.of(row1));
+        when(dispatcher.dispatchDataChangeEvent(any(), any(), any())).thenReturn(true);
+
+        invokeDoExecute();
+
+        verify(progressListener).monitoredDataCollectionsDetermined(eq(partition), any());
+        verify(progressListener).rowsScanned(eq(partition), any(TableId.class), eq(1L));
+        verify(progressListener).dataCollectionSnapshotCompleted(eq(partition), any(TableId.class), eq(1L));
+        verify(initialSnapshotNotificationService).notifyTableInProgress(eq(partition), eq(offsetContext), eq("my_coll"));
+        verify(initialSnapshotNotificationService).notifyCompletedTableSuccessfully(eq(partition), eq(offsetContext), eq("my_coll"));
     }
 
     @Test

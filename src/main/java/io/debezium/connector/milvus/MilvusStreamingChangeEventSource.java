@@ -17,6 +17,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.debezium.DebeziumException;
 import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
 import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.data.Envelope;
@@ -48,6 +49,13 @@ public class MilvusStreamingChangeEventSource
         implements StreamingChangeEventSource<MilvusPartition, MilvusOffsetContext> {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MilvusStreamingChangeEventSource.class);
+
+    /** Maximum number of attempts when resolving etcd checkpoint offsets for snapshot handoff. */
+    private static final int CHECKPOINT_RESOLVE_MAX_ATTEMPTS = 3;
+    /** Initial backoff (ms) between checkpoint resolution retries; doubled each attempt. */
+    private static final long CHECKPOINT_RESOLVE_INITIAL_BACKOFF_MS = 500L;
+    /** Upper bound (ms) for the exponential backoff between checkpoint resolution retries. */
+    private static final long CHECKPOINT_RESOLVE_MAX_BACKOFF_MS = 5_000L;
 
     private final MilvusConnectorConfig connectorConfig;
     private final MilvusMessageConsumer messageConsumer;
@@ -157,7 +165,7 @@ public class MilvusStreamingChangeEventSource
             }
             catch (MilvusWireFormatMismatchException e) {
                 LOGGER.error("Fatal wire format error during streaming: {}", e.getMessage(), e);
-                throw new io.debezium.DebeziumException("Wire format mismatch during streaming", e);
+                throw new DebeziumException("Wire format mismatch during streaming", e);
             }
             catch (Exception e) {
                 if (e instanceof InterruptedException) {
@@ -333,7 +341,8 @@ public class MilvusStreamingChangeEventSource
      * </p>
      */
     private void seekConsumer(String pchannel, TopicPartition tp,
-                              MilvusOffsetContext offsetContext) {
+                              MilvusOffsetContext offsetContext)
+            throws InterruptedException {
         Long storedOffset = offsetContext.getMqOffset(pchannel);
 
         if (storedOffset != null) {
@@ -370,27 +379,53 @@ public class MilvusStreamingChangeEventSource
      * {@code guarantee_ts}. Returns {@code null} when no checkpoint is found,
      * causing the caller to fall back to {@link SeekPosition#LATEST}.
      * </p>
+     *
+     * <p>
+     * Transient etcd errors (e.g. a network blip) are retried with exponential
+     * backoff. If all retries are exhausted the exception is rethrown so the
+     * connector fails hard rather than silently skipping to
+     * {@link SeekPosition#LATEST}, which could drop all events between the
+     * checkpoint and the current head.
+     * </p>
      */
-    private Map<TopicPartition, Long> resolveCheckpointOffsets(String pchannel) {
+    private Map<TopicPartition, Long> resolveCheckpointOffsets(String pchannel)
+            throws InterruptedException {
         if (checkpointReader == null) {
             return null;
         }
-        try {
-            Optional<ChannelCheckpoint> checkpointOpt = checkpointReader.read(pchannel);
-            if (checkpointOpt.isEmpty()) {
-                return null;
+
+        long backoffMs = CHECKPOINT_RESOLVE_INITIAL_BACKOFF_MS;
+        Exception lastError = null;
+
+        for (int attempt = 1; attempt <= CHECKPOINT_RESOLVE_MAX_ATTEMPTS; attempt++) {
+            try {
+                Optional<ChannelCheckpoint> checkpointOpt = checkpointReader.read(pchannel);
+                if (checkpointOpt.isEmpty()) {
+                    return null;
+                }
+                ChannelCheckpoint checkpoint = checkpointOpt.get();
+                long kafkaOffset = checkpoint.getKafkaOffset();
+                TopicPartition tp = new TopicPartition(pchannel, connectorConfig.getKafkaPartitionIndex());
+                LOGGER.info("Resolved checkpoint offset for pchannel={}: kafkaOffset={}, guaranteeTs={}",
+                        pchannel, kafkaOffset, checkpoint.getTimestamp());
+                return Map.of(tp, kafkaOffset);
             }
-            ChannelCheckpoint checkpoint = checkpointOpt.get();
-            long kafkaOffset = checkpoint.getKafkaOffset();
-            TopicPartition tp = new TopicPartition(pchannel, connectorConfig.getKafkaPartitionIndex());
-            LOGGER.info("Resolved checkpoint offset for pchannel={}: kafkaOffset={}, guaranteeTs={}",
-                    pchannel, kafkaOffset, checkpoint.getTimestamp());
-            return Map.of(tp, kafkaOffset);
+            catch (Exception e) {
+                lastError = e;
+                if (attempt < CHECKPOINT_RESOLVE_MAX_ATTEMPTS) {
+                    LOGGER.warn("Failed to resolve checkpoint offsets for pchannel={} (attempt {}/{}): {}. "
+                            + "Retrying in {}ms.",
+                            pchannel, attempt, CHECKPOINT_RESOLVE_MAX_ATTEMPTS,
+                            e.getMessage(), backoffMs);
+                    Thread.sleep(backoffMs);
+                    backoffMs = Math.min(backoffMs * 2, CHECKPOINT_RESOLVE_MAX_BACKOFF_MS);
+                }
+            }
         }
-        catch (Exception e) {
-            LOGGER.warn("Failed to resolve checkpoint offsets for pchannel={}: {}",
-                    pchannel, e.getMessage(), e);
-            return null;
-        }
+
+        throw new DebeziumException(String.format(
+                "Failed to resolve etcd checkpoint offsets for pchannel=%s after %d attempts; "
+                        + "cannot safely resume streaming without risking data loss.",
+                pchannel, CHECKPOINT_RESOLVE_MAX_ATTEMPTS), lastError);
     }
 }

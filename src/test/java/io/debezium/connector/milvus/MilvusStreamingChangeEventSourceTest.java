@@ -6,6 +6,7 @@
 package io.debezium.connector.milvus;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -24,6 +25,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import io.debezium.DebeziumException;
 import io.debezium.config.Configuration;
 import io.debezium.connector.milvus.checkpoint.ChannelCheckpoint;
 import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
@@ -317,5 +319,18 @@ public class MilvusStreamingChangeEventSourceTest {
         source.execute(context, partition, offsetContext);
 
         verify(dispatcher, never()).dispatchDataChangeEvent(any(), any(), any());
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2230")
+    void shouldFailHardOnPersistentEtcdErrorRatherThanSkipToLatest() throws Exception {
+        when(checkpointReader.read(anyString())).thenThrow(new RuntimeException("etcd unavailable"));
+
+        assertThatThrownBy(() -> source.execute(context, partition, offsetContext))
+                .isInstanceOf(DebeziumException.class)
+                .hasMessageContaining("cannot safely resume streaming without risking data loss");
+
+        verify(messageConsumer, never()).assignAndSeek(any(), any(), any());
+        verify(checkpointReader, times(3)).read(anyString());
     }
 }

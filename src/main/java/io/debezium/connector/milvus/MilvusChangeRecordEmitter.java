@@ -52,6 +52,15 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     }
 
     /**
+     * Returns the underlying Milvus change event carried by this emitter.
+     *
+     * @return the change event; never {@code null}
+     */
+    public MilvusChangeEvent getChangeEvent() {
+        return changeEvent;
+    }
+
+    /**
      * Returns the "before" column values for the event.
      *
      * <p>Delete events carry a "before" state containing only the primary key

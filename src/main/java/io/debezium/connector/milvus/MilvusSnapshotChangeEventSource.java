@@ -6,6 +6,7 @@
 package io.debezium.connector.milvus;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +19,7 @@ import io.debezium.connector.milvus.checkpoint.EtcdCheckpointReader;
 import io.debezium.connector.milvus.metadata.CollectionMetadata;
 import io.debezium.connector.milvus.metadata.MilvusCollectionSchema;
 import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
+import io.debezium.connector.milvus.metadata.VChannelMetadata;
 import io.debezium.data.Envelope;
 import io.debezium.pipeline.EventDispatcher;
 import io.debezium.pipeline.notification.NotificationService;
@@ -68,6 +70,7 @@ public class MilvusSnapshotChangeEventSource
     private final MilvusMetadataClient metadataClient;
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
     private final MilvusDatabaseSchema databaseSchema;
+    private final SnapshotProgressListener<MilvusPartition> snapshotProgressListener;
 
     public MilvusSnapshotChangeEventSource(MilvusConnectorConfig connectorConfig,
                                            SnapshotProgressListener<MilvusPartition> snapshotProgressListener,
@@ -84,6 +87,7 @@ public class MilvusSnapshotChangeEventSource
         this.metadataClient = metadataClient;
         this.dispatcher = dispatcher;
         this.databaseSchema = databaseSchema;
+        this.snapshotProgressListener = snapshotProgressListener;
     }
 
     @Override
@@ -121,6 +125,14 @@ public class MilvusSnapshotChangeEventSource
         List<CollectionMetadata> collections = metadataClient.collections();
         List<String> includeList = connectorConfig.getCollectionIncludeList();
         List<String> excludeList = connectorConfig.getCollectionExcludeList();
+        List<TableId> snapshottedTables = new ArrayList<>();
+        for (CollectionMetadata collectionMeta : collections) {
+            String collectionName = collectionMeta.getName();
+            if (isIncluded(collectionName, includeList, excludeList)) {
+                snapshottedTables.add(new TableId(null, dbName, collectionName));
+            }
+        }
+        snapshotProgressListener.monitoredDataCollectionsDetermined(snapshotContext.partition, snapshottedTables);
 
         int collectionCount = 0;
         long totalRows = 0;
@@ -137,13 +149,22 @@ public class MilvusSnapshotChangeEventSource
                 continue;
             }
 
+            TableId tableId = new TableId(null, dbName, collectionName);
+
             LOGGER.info("Snapshotting collection={} ({}/{})",
-                    collectionName, collectionCount + 1, collections.size());
+                    collectionName, collectionCount + 1, snapshottedTables.size());
+
+            notificationService.initialSnapshotNotificationService()
+                    .notifyTableInProgress(snapshotContext.partition, offsetContext, collectionName);
 
             long rows = snapshotCollection(context, snapshotContext.partition, offsetContext,
                     dbName, collectionName, pchannel, guaranteeTs);
             totalRows += rows;
             collectionCount++;
+
+            snapshotProgressListener.dataCollectionSnapshotCompleted(snapshotContext.partition, tableId, rows);
+            notificationService.initialSnapshotNotificationService()
+                    .notifyCompletedTableSuccessfully(snapshotContext.partition, offsetContext, collectionName);
 
             LOGGER.info("Snapshot of collection={} complete: rows={}", collectionName, rows);
         }
@@ -189,6 +210,13 @@ public class MilvusSnapshotChangeEventSource
             }
         }
 
+        Map<String, DataType> typeByName = new HashMap<>(fieldDefs.size() * 2);
+        for (FieldDefinition fd : fieldDefs) {
+            typeByName.put(fd.fieldName(), fd.dataType());
+        }
+
+        String vchannel = resolveVchannel(collectionName, pchannel);
+
         TableId tableId = new TableId(null, dbName, collectionName);
         databaseSchema.registerCollection(dbName, collectionName, fieldDefs);
 
@@ -218,12 +246,12 @@ public class MilvusSnapshotChangeEventSource
                     break;
                 }
 
-                MilvusRow row = toMilvusRow(rowMap, columnNames, fieldDefs);
+                MilvusRow row = toMilvusRow(rowMap, columnNames, typeByName);
 
-                offsetContext.updateForEvent(dbName, collectionName, pchannel, "", guaranteeTs);
+                offsetContext.updateForEvent(dbName, collectionName, pchannel, vchannel, guaranteeTs);
 
                 MilvusChangeEvent.Insert snapshotInsert = new MilvusChangeEvent.Insert(
-                        collectionName, pchannel, pchannel, guaranteeTs, row);
+                        collectionName, pchannel, vchannel, guaranteeTs, row);
 
                 MilvusChangeRecordEmitter emitter = new MilvusChangeRecordEmitter(
                         partition, offsetContext, Clock.SYSTEM, connectorConfig,
@@ -233,6 +261,8 @@ public class MilvusSnapshotChangeEventSource
                 dispatcher.dispatchDataChangeEvent(partition, tableId, emitter);
                 rowsEmitted++;
             }
+
+            snapshotProgressListener.rowsScanned(partition, tableId, rowsEmitted);
 
             if (page.size() < batchSize) {
                 break;
@@ -247,16 +277,13 @@ public class MilvusSnapshotChangeEventSource
      * Convert a {@code Map<String, Object>} query result row into a {@link MilvusRow}.
      *
      * <p>Fields are ordered according to {@code columnNames} (derived from the registered
-     * schema) to guarantee stable column ordering across batches.</p>
+     * schema) to guarantee stable column ordering across batches. The {@code typeByName}
+     * map is built once per collection by {@link #snapshotCollection} and reused for
+     * every row to avoid O(rows * fields) rebuild cost.</p>
      */
     private MilvusRow toMilvusRow(Map<String, Object> rowMap,
                                   String[] columnNames,
-                                  List<FieldDefinition> fieldDefs) {
-        Map<String, DataType> typeByName = new java.util.HashMap<>(fieldDefs.size() * 2);
-        for (FieldDefinition fd : fieldDefs) {
-            typeByName.put(fd.fieldName(), fd.dataType());
-        }
-
+                                  Map<String, DataType> typeByName) {
         String[] fieldNames = columnNames;
         Object[] fieldValues = new Object[fieldNames.length];
         DataType[] fieldTypes = new DataType[fieldNames.length];
@@ -268,6 +295,36 @@ public class MilvusSnapshotChangeEventSource
         }
 
         return new MilvusRow(fieldNames, fieldValues, fieldTypes);
+    }
+
+    /**
+     * Resolve the virtual channel (vchannel) for a collection being snapshotted.
+     *
+     * <p>A vchannel is the logical channel that maps a collection to its physical
+     * channel (pchannel). During streaming the vchannel is obtained from the Milvus
+     * insert request's shard name; for the snapshot we resolve it from the collection
+     * metadata via {@link MilvusMetadataClient#channels(String)}. If the metadata
+     * client does not expose a vchannel whose pchannel matches the one being
+     * snapshotted, fall back to the conventional {@code "<collection>_v<partition>"}
+     * name so we never report the pchannel as the vchannel.</p>
+     */
+    private String resolveVchannel(String collectionName, String pchannel) {
+        try {
+            List<VChannelMetadata> channels = metadataClient.channels(collectionName);
+            for (VChannelMetadata ch : channels) {
+                if (pchannel == null || pchannel.equals(ch.getPchannel())) {
+                    return ch.getVchannel();
+                }
+            }
+            if (!channels.isEmpty()) {
+                return channels.get(0).getVchannel();
+            }
+        }
+        catch (Exception e) {
+            LOGGER.warn("Failed to resolve vchannel for collection={}; falling back to derived name: {}",
+                    collectionName, e.getMessage());
+        }
+        return collectionName + "_v" + connectorConfig.getKafkaPartitionIndex();
     }
 
     /**
