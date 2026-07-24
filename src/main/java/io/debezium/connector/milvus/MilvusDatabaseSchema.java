@@ -279,6 +279,59 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
     }
 
     /**
+     * Attempt to register a collection by querying the Milvus metadata API.
+     *
+     * <p>
+     * This is needed when a {@link MilvusChangeEvent.Delete} (or other non-Insert
+     * event) arrives for a collection that has not yet been seen in an Insert event.
+     * Without schema registration the event would be silently dropped. By fetching
+     * the schema from Milvus we can register the collection on-demand and correctly
+     * dispatch the event.
+     * </p>
+     *
+     * @param dbName         Milvus database name
+     * @param collectionName collection to look up
+     * @return {@code true} if the collection was newly registered, {@code false} if
+     *         already registered or metadata client unavailable / collection not found
+     */
+    public boolean registerCollectionFromMetadata(String dbName, String collectionName) {
+        if (metadataClient == null) {
+            return false;
+        }
+        TableId tableId = new TableId(null, dbName, collectionName);
+        if (registeredTableIds.contains(tableId)) {
+            return false;
+        }
+        try {
+            io.debezium.connector.milvus.metadata.MilvusCollectionSchema schema = metadataClient.schema(collectionName);
+            List<FieldDefinition> fields = new ArrayList<>();
+            for (io.debezium.connector.milvus.metadata.MilvusCollectionSchema.FieldSchema f : schema.getFields()) {
+                io.milvus.grpc.DataType dt = io.milvus.grpc.DataType.forNumber(f.getDataType());
+                if (dt == null) {
+                    dt = io.milvus.grpc.DataType.None;
+                }
+                fields.add(new FieldDefinition(f.getName(), null, dt));
+            }
+            if (fields.isEmpty()) {
+                LOGGER.warn("Metadata schema for collection {} has no fields; cannot register", collectionName);
+                return false;
+            }
+            LOGGER.info("Registering collection {} from Milvus metadata (triggered by non-Insert event)",
+                    collectionName);
+            return registerCollection(dbName, collectionName, fields);
+        }
+        catch (io.debezium.connector.milvus.metadata.CollectionNotFoundException e) {
+            LOGGER.warn("Collection {} not found in Milvus metadata; cannot register schema", collectionName);
+            return false;
+        }
+        catch (Exception e) {
+            LOGGER.warn("Failed to fetch schema for collection {} from Milvus metadata: {}",
+                    collectionName, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Get the column names for a registered collection.
      */
     public String[] getColumnNames(TableId tableId) {
