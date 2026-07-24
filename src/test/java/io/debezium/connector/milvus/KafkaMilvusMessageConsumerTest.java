@@ -94,6 +94,18 @@ public class KafkaMilvusMessageConsumerTest {
 
     @Test
     @FixFor("debezium/dbz#2068")
+    void shouldSeekToLatestAndEagerlyResolvePosition() {
+        when(kafkaConsumer.position(TP)).thenReturn(42L);
+
+        consumer.assignAndSeek(Set.of(TOPIC), SeekPosition.LATEST, null);
+
+        verify(kafkaConsumer).assign(Set.of(TP));
+        verify(kafkaConsumer).seekToEnd(Set.of(TP));
+        verify(kafkaConsumer).position(TP);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2068")
     void shouldSeekToStoredOffsetPlusOne() {
         Map<TopicPartition, Long> storedOffsets = Map.of(TP, 99L);
 

@@ -182,7 +182,10 @@ public class KafkaMilvusMessageConsumer implements MilvusMessageConsumer {
 
             case LATEST:
                 kafkaConsumer.seekToEnd(partitions);
-                LOGGER.info("Seeked to latest for all assigned partitions");
+                for (TopicPartition tp : partitions) {
+                    long resolved = kafkaConsumer.position(tp);
+                    LOGGER.info("Eagerly resolved LATEST for {} = {}", tp, resolved);
+                }
                 break;
 
             case STORED_OFFSET_PLUS_ONE:
