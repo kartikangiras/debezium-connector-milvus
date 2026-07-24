@@ -257,9 +257,12 @@ public class MilvusStreamingChangeEventSource
                     databaseSchema.registerCollection(dbName, collectionName, fields);
                 }
                 else {
-                    LOGGER.debug("Skipping event for unregistered collection {}: type={}",
-                            collectionName, event.getClass().getSimpleName());
-                    continue;
+                    boolean registered = databaseSchema.registerCollectionFromMetadata(dbName, collectionName);
+                    if (!registered) {
+                        LOGGER.debug("Skipping event for unregistered collection {}: type={}",
+                                collectionName, event.getClass().getSimpleName());
+                        continue;
+                    }
                 }
             }
 
