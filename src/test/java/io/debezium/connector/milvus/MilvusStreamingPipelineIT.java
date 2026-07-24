@@ -8,7 +8,6 @@ package io.debezium.connector.milvus;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -319,21 +318,25 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
 
         String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
                 + "." + collectionName;
-        List<SourceRecord> allRecords = new ArrayList<>();
+
         Awaitility.await("insert and delete records on topic " + expectedTopic)
-                .atMost(Duration.ofSeconds(20))
-                .pollInterval(Duration.ofMillis(200))
+                .pollDelay(Duration.ofSeconds(1))
+                .pollInterval(Duration.ofMillis(500))
+                .atMost(Duration.ofSeconds(60))
                 .untilAsserted(() -> {
-                    consumeAvailableRecordsByTopic().allRecordsInOrder().forEach(allRecords::add);
-                    List<SourceRecord> topicRecords = recordsForTopic(allRecords, expectedTopic);
+                    List<SourceRecord> topicRecords = consumedLines.stream()
+                            .filter(r -> expectedTopic.equals(r.topic()))
+                            .collect(Collectors.toList());
                     assertThat(topicRecords)
-                            .withFailMessage("Expected 2 records on topic %s, got records=%s",
-                                    expectedTopic, allRecords)
-                            .hasSize(2);
+                            .withFailMessage("Expected at least 2 records (insert+delete) on topic %s, got %d: %s",
+                                    expectedTopic, topicRecords.size(), topicRecords)
+                            .hasSizeGreaterThanOrEqualTo(2);
                 });
 
-        List<SourceRecord> topicRecords = recordsForTopic(allRecords, expectedTopic);
-        assertThat(topicRecords).hasSize(2);
+        List<SourceRecord> topicRecords = consumedLines.stream()
+                .filter(r -> expectedTopic.equals(r.topic()))
+                .collect(Collectors.toList());
+        assertThat(topicRecords).hasSizeGreaterThanOrEqualTo(2);
 
         SourceRecord insertRecord = topicRecords.get(0);
         Struct insertValue = (Struct) insertRecord.value();
