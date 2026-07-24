@@ -423,6 +423,19 @@ public class MilvusSnapshotChangeEventSource
     }
 
     /**
+     * Surface the guarantee TSO on the snapshot metrics MBean when the
+     * runtime type of {@link #snapshotProgressListener} is a
+     * {@link MilvusSnapshotChangeEventSourceMetrics}. No-op otherwise.
+     *
+     * @param tso the guarantee TSO, or 0 if no checkpoint was available
+     */
+    private void setGuaranteeTsoOnMetrics(long tso) {
+        if (snapshotProgressListener instanceof MilvusSnapshotChangeEventSourceMetrics metrics) {
+            metrics.setGuaranteeTso(tso);
+        }
+    }
+
+    /**
      * Minimal snapshot context holding the partition being snapshotted.
      */
     private static class MilvusSnapshotContext
