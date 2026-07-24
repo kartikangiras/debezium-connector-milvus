@@ -34,19 +34,22 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
     private final EtcdCheckpointReader checkpointReader;
     private final MilvusSnapshotQueryClient snapshotQueryClient;
     private final MilvusMetadataClient metadataClient;
+    private final MilvusStreamingChangeEventSourceMetrics streamingMetrics;
 
     public MilvusChangeEventSourceFactory(MilvusConnectorConfig connectorConfig,
                                           EventDispatcher<MilvusPartition, TableId> dispatcher,
                                           MilvusDatabaseSchema schema,
                                           EtcdCheckpointReader checkpointReader,
                                           MilvusSnapshotQueryClient snapshotQueryClient,
-                                          MilvusMetadataClient metadataClient) {
+                                          MilvusMetadataClient metadataClient,
+                                          MilvusStreamingChangeEventSourceMetrics streamingMetrics) {
         this.connectorConfig = connectorConfig;
         this.dispatcher = dispatcher;
         this.schema = schema;
         this.checkpointReader = checkpointReader;
         this.snapshotQueryClient = snapshotQueryClient;
         this.metadataClient = metadataClient;
+        this.streamingMetrics = streamingMetrics;
     }
 
     @Override
@@ -73,6 +76,6 @@ public class MilvusChangeEventSourceFactory implements ChangeEventSourceFactory<
         TimetickOrderingEngine orderingEngine = new TimetickOrderingEngine(connectorConfig);
         return new MilvusStreamingChangeEventSource(
                 connectorConfig, messageConsumer, deserializer, orderingEngine,
-                dispatcher, schema, checkpointReader);
+                dispatcher, schema, checkpointReader, streamingMetrics);
     }
 }

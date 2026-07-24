@@ -50,6 +50,7 @@ public class MilvusStreamingChangeEventSourceTest {
 
     private EventDispatcher<MilvusPartition, TableId> dispatcher;
     private MilvusDatabaseSchema schema;
+    private MilvusStreamingChangeEventSourceMetrics streamingMetrics;
 
     @SuppressWarnings("unchecked")
     @BeforeEach
@@ -76,9 +77,11 @@ public class MilvusStreamingChangeEventSourceTest {
         when(schema.getColumnNames(any(TableId.class))).thenReturn(new String[]{ "id" });
         when(schema.getPkFieldName(any(TableId.class))).thenReturn("id");
 
+        streamingMetrics = mock(MilvusStreamingChangeEventSourceMetrics.class);
+
         source = new MilvusStreamingChangeEventSource(
                 config, messageConsumer, deserializer, orderingEngine,
-                dispatcher, schema, checkpointReader);
+                dispatcher, schema, checkpointReader, streamingMetrics);
     }
 
     @Test

@@ -29,7 +29,6 @@ import io.debezium.connector.milvus.metadata.MilvusServiceMetadataClient;
 import io.debezium.pipeline.ChangeEventSourceCoordinator;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
-import io.debezium.pipeline.metrics.DefaultChangeEventSourceMetricsFactory;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.spi.Offsets;
 import io.debezium.pipeline.spi.Partition;
@@ -125,8 +124,13 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
                 connectorConfig.schemaNameAdjuster(),
                 headerProducer);
 
+        MilvusStreamingChangeEventSourceMetrics streamingMetrics = new MilvusStreamingChangeEventSourceMetrics(
+                taskContext, queue, metadataProvider, schema::dataCollectionIds);
+        MilvusChangeEventSourceMetricsFactory metricsFactory = new MilvusChangeEventSourceMetricsFactory(streamingMetrics);
+
         MilvusChangeEventSourceFactory factory = new MilvusChangeEventSourceFactory(
-                connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient);
+                connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient,
+                streamingMetrics);
 
         SnapshotterService snapshotterService = MilvusSnapshotter.createService();
 
@@ -139,7 +143,7 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
                 MilvusConnector.class,
                 connectorConfig,
                 factory,
-                new DefaultChangeEventSourceMetricsFactory<>(),
+                new MilvusChangeEventSourceMetricsFactory(streamingMetrics),
                 dispatcher,
                 schema,
                 null,
