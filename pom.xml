@@ -339,7 +339,7 @@
                                     <port>2379:2379</port>
                                 </ports>
                                 <cmd>etcd
-                                    --advertise-client-urls http://etcd:2379
+                                    --advertise-client-urls http://etcd:2379,http://localhost:2379
                                     --listen-client-urls http://0.0.0.0:2379</cmd>
                                 <wait>
                                     <http>
