@@ -62,6 +62,7 @@ public class MilvusStreamingChangeEventSource
     private final MilvusDatabaseSchema databaseSchema;
     private final Duration pollTimeout;
     private final EtcdCheckpointReader checkpointReader;
+    private final MilvusStreamingChangeEventSourceMetrics streamingMetrics;
 
     public MilvusStreamingChangeEventSource(MilvusConnectorConfig connectorConfig,
                                             MilvusMessageConsumer messageConsumer,
@@ -69,7 +70,8 @@ public class MilvusStreamingChangeEventSource
                                             TimetickOrderingEngine orderingEngine,
                                             EventDispatcher<MilvusPartition, TableId> dispatcher,
                                             MilvusDatabaseSchema databaseSchema,
-                                            EtcdCheckpointReader checkpointReader) {
+                                            EtcdCheckpointReader checkpointReader,
+                                            MilvusStreamingChangeEventSourceMetrics streamingMetrics) {
         this.connectorConfig = connectorConfig;
         this.messageConsumer = messageConsumer;
         this.deserializer = deserializer;
@@ -78,6 +80,7 @@ public class MilvusStreamingChangeEventSource
         this.databaseSchema = databaseSchema;
         this.pollTimeout = Duration.ofMillis(connectorConfig.getPollIntervalMs());
         this.checkpointReader = checkpointReader;
+        this.streamingMetrics = streamingMetrics;
     }
 
     @Override
@@ -101,6 +104,8 @@ public class MilvusStreamingChangeEventSource
 
         seekConsumer(pchannel, tp, offsetContext);
 
+        streamingMetrics.connected(true);
+
         boolean bufferFull = false;
 
         while (context.isRunning()) {
@@ -120,6 +125,7 @@ public class MilvusStreamingChangeEventSource
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
                     dispatchFlushedEvents(flushed, partition, offsetContext);
+                    streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
                 }
 
                 if (orderingEngine.isStalled()) {
@@ -133,6 +139,7 @@ public class MilvusStreamingChangeEventSource
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
                         dispatchFlushedEvents(forceFlushed, partition, offsetContext);
+                        streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
                     }
                 }
 
@@ -147,12 +154,14 @@ public class MilvusStreamingChangeEventSource
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
                     dispatchFlushedEvents(flushed, partition, offsetContext);
+                    streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
                     bufferFull = false;
                 }
                 else if (orderingEngine.isStalled()) {
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
                         dispatchFlushedEvents(forceFlushed, partition, offsetContext);
+                        streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
                     }
                     bufferFull = false;
                 }
@@ -180,10 +189,12 @@ public class MilvusStreamingChangeEventSource
                 orderingEngine.getForceFlushCount(),
                 orderingEngine.getLateMessagesDropped(),
                 orderingEngine.getGlobalWatermark());
+        streamingMetrics.connected(false);
     }
 
     @Override
     public void close() {
+        streamingMetrics.connected(false);
         if (messageConsumer != null) {
             messageConsumer.close();
         }
@@ -285,6 +296,10 @@ public class MilvusStreamingChangeEventSource
         if (dispatched > 0) {
             LOGGER.info("Dispatched {} events (watermark={})",
                     dispatched, orderingEngine.getGlobalWatermark());
+            Map<String, String> position = Map.of(
+                    "pchannel", partition.getPchannel(),
+                    "watermark", String.valueOf(orderingEngine.getGlobalWatermark()));
+            streamingMetrics.updateSourceEventPosition(position);
         }
     }
 
