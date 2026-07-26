@@ -54,9 +54,12 @@ public class MilvusChangeRecordEmitter extends RelationalChangeRecordEmitter<Mil
     /**
      * Returns the underlying Milvus change event carried by this emitter.
      *
+     * <p>Package-private: only used by tests in this package to inspect the
+     * event that produced a given emitter.</p>
+     *
      * @return the change event; never {@code null}
      */
-    public MilvusChangeEvent getChangeEvent() {
+    MilvusChangeEvent getChangeEvent() {
         return changeEvent;
     }
 
