@@ -304,6 +304,11 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         start(MilvusConnector.class, connectorConfig());
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
 
+        Awaitility.await("consumer LATEST resolved")
+                .pollDelay(Duration.ofSeconds(2))
+                .atMost(Duration.ofSeconds(10))
+                .until(() -> true);
+
         long entityId = System.nanoTime();
 
         milvusClient.insert(InsertReq.builder()
