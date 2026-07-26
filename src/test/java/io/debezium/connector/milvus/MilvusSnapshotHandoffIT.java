@@ -236,7 +236,13 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
 
         String topic = expectedTopic();
 
-        consumeRecordsByTopic(1);
+        AbstractConnectorTest.SourceRecords snapshotRecords = consumeRecordsByTopic(1);
+        List<SourceRecord> snapshotTopicRecords = snapshotRecords.recordsForTopic(topic);
+        assertThat(snapshotTopicRecords).as("Expected 1 op=r snapshot record").hasSize(1);
+        Struct snapshotValue = (Struct) snapshotTopicRecords.get(0).value();
+        assertThat(snapshotValue.getString("op")).isEqualTo("r");
+        assertThat(snapshotValue.get("before")).isNull();
+        assertThat(snapshotValue.getStruct("after")).isNotNull();
 
         milvusClient.insert(InsertReq.builder().collectionName(collectionName)
                 .data(Collections.singletonList(simpleRow(2L, "streaming-row")))
