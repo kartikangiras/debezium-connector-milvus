@@ -175,6 +175,7 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                 .collectionName(name)
                 .collectionSchema(schema)
                 .build());
+        TestHelper.loadCollection(milvusClient, name, "vector");
     }
 
     private void createAllFieldTypesCollection(String name) {
@@ -222,6 +223,7 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                 .collectionName(name)
                 .collectionSchema(schema)
                 .build());
+        TestHelper.loadCollection(milvusClient, name, "embedding");
     }
 
     private JsonObject rowWithIdAndTitle(long id, String title) {

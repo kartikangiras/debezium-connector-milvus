@@ -104,22 +104,22 @@ public class MilvusSnapshotChangeEventSource
         String pchannel = snapshotContext.partition.getPchannel();
         LOGGER.info("Starting Milvus snapshot for pchannel={}", pchannel);
 
+        long guaranteeTs;
         Optional<ChannelCheckpoint> checkpointOpt = checkpointReader.read(pchannel);
-        if (checkpointOpt.isEmpty()) {
-            LOGGER.warn("No etcd checkpoint found for pchannel={}. "
-                    + "Completing snapshot immediately — streaming will start from LATEST.", pchannel);
-            offsetContext.markSnapshotCompleted();
-            return SnapshotResult.completed(offsetContext);
+        if (checkpointOpt.isPresent()) {
+            ChannelCheckpoint checkpoint = checkpointOpt.get();
+            guaranteeTs = checkpoint.getTimestamp();
+            long kafkaOffset = checkpoint.getKafkaOffset();
+            LOGGER.info("Etcd checkpoint for pchannel={}: guaranteeTs={}, kafkaOffset={}",
+                    pchannel, guaranteeTs, kafkaOffset);
+            offsetContext.setMqPosition(pchannel, connectorConfig.getKafkaPartitionIndex(), kafkaOffset);
+            offsetContext.setCheckpointTimestamp(guaranteeTs);
         }
-
-        ChannelCheckpoint checkpoint = checkpointOpt.get();
-        long guaranteeTs = checkpoint.getTimestamp();
-        long kafkaOffset = checkpoint.getKafkaOffset();
-        LOGGER.info("Etcd checkpoint for pchannel={}: guaranteeTs={}, kafkaOffset={}",
-                pchannel, guaranteeTs, kafkaOffset);
-
-        offsetContext.setMqPosition(pchannel, connectorConfig.getKafkaPartitionIndex(), kafkaOffset);
-        offsetContext.setCheckpointTimestamp(guaranteeTs);
+        else {
+            guaranteeTs = 0L;
+            LOGGER.warn("No etcd checkpoint found for pchannel={}.  Snapshotting with guaranteeTs=0 "
+                    + "and streaming will resume from LATEST.", pchannel);
+        }
 
         String dbName = connectorConfig.getMilvusDatabase();
         List<CollectionMetadata> collections = metadataClient.collections();
@@ -303,10 +303,20 @@ public class MilvusSnapshotChangeEventSource
      * <p>A vchannel is the logical channel that maps a collection to its physical
      * channel (pchannel). During streaming the vchannel is obtained from the Milvus
      * insert request's shard name; for the snapshot we resolve it from the collection
-     * metadata via {@link MilvusMetadataClient#channels(String)}. If the metadata
-     * client does not expose a vchannel whose pchannel matches the one being
-     * snapshotted, fall back to the conventional {@code "<collection>_v<partition>"}
-     * name so we never report the pchannel as the vchannel.</p>
+     * metadata via {@link MilvusMetadataClient#channels(String)}.</p>
+     *
+     * <p>{@code vchannel} is purely informational: it is only surfaced in the
+     * {@code source.vchannel} field of emitted records (see
+     * {@link MilvusOffsetContext#updateForEvent}). Snapshot/streaming dedup and
+     * resume are keyed by pchannel and Kafka offset, and streaming's own
+     * per-vchannel watermark tracking is populated exclusively from live Milvus
+     * timetick events, so this value never feeds into correctness-critical logic.</p>
+     *
+     * <p>When the metadata client cannot resolve a vchannel for this collection
+     * (e.g. because etcd is temporarily unavailable), {@code null} is returned.
+     * A {@code null} vchannel causes the {@code source.vchannel} field to be absent
+     * in the emitted record but has no impact on snapshot correctness, dedup, or
+     * streaming resume, since none of those paths key on vchannel.</p>
      */
     private String resolveVchannel(String collectionName, String pchannel) {
         try {
@@ -319,12 +329,15 @@ public class MilvusSnapshotChangeEventSource
             if (!channels.isEmpty()) {
                 return channels.get(0).getVchannel();
             }
+            LOGGER.warn("No vchannel metadata found for collection={}; "
+                    + "source.vchannel will be unresolved (null) for its snapshot rows.", collectionName);
         }
         catch (Exception e) {
-            LOGGER.warn("Failed to resolve vchannel for collection={}; falling back to derived name: {}",
+            LOGGER.warn("Failed to resolve vchannel for collection={}; "
+                    + "source.vchannel will be unresolved (null) for its snapshot rows: {}",
                     collectionName, e.getMessage());
         }
-        return collectionName + "_v" + connectorConfig.getKafkaPartitionIndex();
+        return null;
     }
 
     /**

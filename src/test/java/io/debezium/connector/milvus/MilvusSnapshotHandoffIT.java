@@ -8,7 +8,6 @@ package io.debezium.connector.milvus;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -32,6 +31,7 @@ import io.debezium.config.Configuration;
 import io.debezium.connector.milvus.MilvusConnectorConfig.SnapshotMode;
 import io.debezium.connector.milvus.util.MilvusTestContainer;
 import io.debezium.connector.milvus.util.TestHelper;
+import io.debezium.embedded.AbstractConnectorTest;
 import io.debezium.embedded.async.AbstractAsyncEngineConnectorTest;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
@@ -45,7 +45,6 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
     private static final String PCHANNEL = "by-dev-rootcoord-dml_0";
     private static final int DIM = 4;
     private static final Gson GSON = new Gson();
-    private static final Duration RECORD_TIMEOUT = Duration.ofSeconds(15);
 
     private static MilvusClientV2 milvusClient;
     private static String bootstrap;
@@ -138,6 +137,7 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 .collectionSchema(CreateCollectionReq.CollectionSchema.builder()
                         .fieldSchemaList(Arrays.asList(idField, titleField, vecField)).build())
                 .build());
+        TestHelper.loadCollection(milvusClient, name, "vector");
     }
 
     private JsonObject simpleRow(long id, String title) {
@@ -154,23 +154,6 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 + "." + collectionName;
     }
 
-    private List<SourceRecord> topicRecords(String topic) {
-        List<SourceRecord> result = new ArrayList<>();
-        for (SourceRecord r : consumedLines) {
-            if (topic.equals(r.topic())) {
-                result.add(r);
-            }
-        }
-        return result;
-    }
-
-    private List<SourceRecord> awaitTopicRecords(String topic, int expectedCount) {
-        Awaitility.await("records for topic " + topic)
-                .atMost(RECORD_TIMEOUT).pollInterval(Duration.ofMillis(200))
-                .until(() -> topicRecords(topic).size() >= expectedCount);
-        return topicRecords(topic);
-    }
-
     @Test
     void shouldTakeSnapshotThenHandoffToStreaming() throws Exception {
         createSimpleCollection(collectionName);
@@ -180,19 +163,27 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 .build());
 
         start(MilvusConnector.class, connectorConfig(SnapshotMode.INITIAL));
+        waitForSnapshotToBeCompleted("milvus", TestHelper.TOPIC_PREFIX);
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
 
         String topic = expectedTopic();
+
+        AbstractConnectorTest.SourceRecords snapshotPhaseRecords = consumeRecordsByTopic(3);
+        List<SourceRecord> reads = snapshotPhaseRecords.recordsForTopic(topic);
+        assertThat(reads).as("Expected 3 op=r snapshot records").hasSize(3);
+        for (SourceRecord r : reads) {
+            Struct value = (Struct) r.value();
+            assertThat(value.get("before")).isNull();
+            assertThat(value.getStruct("after")).isNotNull();
+        }
 
         milvusClient.insert(InsertReq.builder().collectionName(collectionName)
                 .data(Arrays.asList(simpleRow(2001L, "stream-row-1"),
                         simpleRow(2002L, "stream-row-2")))
                 .build());
 
-        List<SourceRecord> records = awaitTopicRecords(topic, 2);
-        assertThat(records).as("At least 2 streaming records must arrive").hasSizeGreaterThanOrEqualTo(2);
-
-        List<SourceRecord> creates = records.stream()
+        AbstractConnectorTest.SourceRecords streamingRecords = consumeRecordsByTopic(2);
+        List<SourceRecord> creates = streamingRecords.recordsForTopic(topic).stream()
                 .filter(r -> "c".equals(((Struct) r.value()).getString("op")))
                 .collect(Collectors.toList());
         assertThat(creates).as("Expected 2 op=c streaming records").hasSize(2);
@@ -200,18 +191,6 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
             Struct after = ((Struct) r.value()).getStruct("after");
             assertThat(after).isNotNull();
             assertThat(after.get("title")).asString().startsWith("stream-row-");
-        }
-
-        List<SourceRecord> reads = topicRecords(topic).stream()
-                .filter(r -> "r".equals(((Struct) r.value()).getString("op")))
-                .collect(Collectors.toList());
-        if (!reads.isEmpty()) {
-            assertThat(reads).hasSize(3);
-            for (SourceRecord r : reads) {
-                Struct value = (Struct) r.value();
-                assertThat(value.get("before")).isNull();
-                assertThat(value.getStruct("after")).isNotNull();
-            }
         }
     }
 
@@ -230,13 +209,14 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 .build());
 
         String topic = expectedTopic();
-        List<SourceRecord> records = awaitTopicRecords(topic, 1);
-        assertThat(records).hasSize(1);
-        Struct value = (Struct) records.get(0).value();
+        AbstractConnectorTest.SourceRecords allRecords = consumeRecordsByTopic(1);
+        List<SourceRecord> topicRecords = allRecords.recordsForTopic(topic);
+        assertThat(topicRecords).as("Expected 1 streaming record on topic " + topic).hasSize(1);
+        Struct value = (Struct) topicRecords.get(0).value();
         assertThat(value.getString("op")).isEqualTo("c");
         assertThat(value.getStruct("after").get("id")).isEqualTo(100L);
 
-        long readCount = topicRecords(topic).stream()
+        long readCount = topicRecords.stream()
                 .filter(r -> "r".equals(((Struct) r.value()).getString("op"))).count();
         assertThat(readCount).as("No snapshot records with mode=never").isZero();
     }
@@ -249,24 +229,28 @@ class MilvusSnapshotHandoffIT extends AbstractAsyncEngineConnectorTest {
                 .build());
 
         start(MilvusConnector.class, connectorConfig(SnapshotMode.INITIAL));
+        waitForSnapshotToBeCompleted("milvus", TestHelper.TOPIC_PREFIX);
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
 
         String topic = expectedTopic();
+
+        consumeRecordsByTopic(1);
 
         milvusClient.insert(InsertReq.builder().collectionName(collectionName)
                 .data(Collections.singletonList(simpleRow(2L, "streaming-row")))
                 .build());
 
-        List<SourceRecord> allRecords = awaitTopicRecords(topic, 1);
+        AbstractConnectorTest.SourceRecords streamingRecords = consumeRecordsByTopic(1);
+        List<SourceRecord> topicRecords = streamingRecords.recordsForTopic(topic);
 
-        List<SourceRecord> creates = allRecords.stream()
+        List<SourceRecord> creates = topicRecords.stream()
                 .filter(r -> "c".equals(((Struct) r.value()).getString("op")))
                 .collect(Collectors.toList());
         assertThat(creates).as("Streaming insert must be present").isNotEmpty();
         Struct createVal = (Struct) creates.get(0).value();
         assertThat(createVal.getStruct("after").get("id")).isEqualTo(2L);
 
-        long duplicateCount = allRecords.stream()
+        long duplicateCount = topicRecords.stream()
                 .filter(r -> {
                     Struct v = (Struct) r.value();
                     return "c".equals(v.getString("op"))

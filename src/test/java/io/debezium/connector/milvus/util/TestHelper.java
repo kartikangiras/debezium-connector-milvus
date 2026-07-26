@@ -21,6 +21,9 @@ import io.debezium.connector.milvus.KafkaMilvusMessageConsumer;
 import io.debezium.connector.milvus.MilvusConnectorConfig;
 import io.milvus.v2.client.ConnectConfig;
 import io.milvus.v2.client.MilvusClientV2;
+import io.milvus.v2.common.IndexParam;
+import io.milvus.v2.service.collection.request.LoadCollectionReq;
+import io.milvus.v2.service.index.request.CreateIndexReq;
 
 public final class TestHelper {
 
@@ -85,5 +88,29 @@ public final class TestHelper {
 
     public static KafkaMilvusMessageConsumer kafkaConsumer(MilvusConnectorConfig config) {
         return new KafkaMilvusMessageConsumer(config);
+    }
+
+    /**
+     * Builds an index on {@code vectorFieldName} and loads {@code collectionName} into memory.
+     *
+     * <p>Milvus requires a collection to be indexed and loaded before it can be queried
+     * (including plain scalar {@code query()} calls used by the connector's snapshot path,
+     * not just vector search). Collections created only from a schema are neither indexed
+     * nor loaded, so tests that expect the snapshot to actually query Milvus must call this
+     * after creating the collection.</p>
+     */
+    public static void loadCollection(MilvusClientV2 client, String collectionName, String vectorFieldName) {
+        IndexParam indexParam = IndexParam.builder()
+                .fieldName(vectorFieldName)
+                .indexType(IndexParam.IndexType.AUTOINDEX)
+                .metricType(IndexParam.MetricType.L2)
+                .build();
+        client.createIndex(CreateIndexReq.builder()
+                .collectionName(collectionName)
+                .indexParams(java.util.List.of(indexParam))
+                .build());
+        client.loadCollection(LoadCollectionReq.builder()
+                .collectionName(collectionName)
+                .build());
     }
 }
