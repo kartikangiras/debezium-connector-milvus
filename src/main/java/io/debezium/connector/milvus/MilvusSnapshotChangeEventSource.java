@@ -10,6 +10,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.spi.SnapshotResult;
 import io.debezium.relational.TableId;
 import io.debezium.util.Clock;
+import io.debezium.util.Strings;
 import io.milvus.grpc.DataType;
 
 /**
@@ -341,17 +344,34 @@ public class MilvusSnapshotChangeEventSource
     }
 
     /**
-     * Determine whether a collection should be included in the snapshot, based on
-     * the connector's include/exclude list configuration.
+     * Determine whether a collection should be included in the snapshot.
+     *
+     * <p>Both the include and exclude lists support literal collection names as well
+     * as regular expressions compiled via {@link Strings#setOfRegex(String)}, matching
+     * the behaviour of other Debezium connectors.  For example, {@code "orders.*"} matches
+     * every collection whose name begins with {@code orders}.</p>
+     *
+     * <p>Evaluation order:
+     * <ol>
+     *   <li>If the exclude list is non-empty and the collection matches any entry,
+     *       the collection is excluded.</li>
+     *   <li>If the include list is non-empty, the collection must match at least
+     *       one entry to be included.</li>
+     *   <li>If neither list constrains the collection it is included.</li>
+     * </ol></p>
      */
     private static boolean isIncluded(String collectionName,
                                       List<String> includeList,
                                       List<String> excludeList) {
-        if (excludeList != null && excludeList.contains(collectionName)) {
-            return false;
+        if (excludeList != null && !excludeList.isEmpty()) {
+            Set<Pattern> excludePatterns = Strings.setOfRegex(String.join(",", excludeList));
+            if (excludePatterns.stream().anyMatch(p -> p.matcher(collectionName).matches())) {
+                return false;
+            }
         }
         if (includeList != null && !includeList.isEmpty()) {
-            return includeList.contains(collectionName);
+            Set<Pattern> includePatterns = Strings.setOfRegex(String.join(",", includeList));
+            return includePatterns.stream().anyMatch(p -> p.matcher(collectionName).matches());
         }
         return true;
     }
