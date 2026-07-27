@@ -104,14 +104,20 @@ public class MilvusConnectorConfig extends RelationalDatabaseConnectorConfig {
             .withType(Type.LIST)
             .withWidth(Width.LONG)
             .withImportance(Importance.HIGH)
-            .withDescription("Comma-separated list of collection names to capture.");
+            .withDescription("A comma-separated list of regular expressions matching collection names whose change events "
+                    + "should be captured. If not set, all collections are captured. "
+                    + "Entries may be literal names or Java regular expressions (e.g. 'orders.*' to match every "
+                    + "collection whose name begins with 'orders'). "
+                    + "Cannot be used together with milvus.collection.exclude.list.");
 
     public static final Field COLLECTION_EXCLUDE_LIST = Field.create("milvus.collection.exclude.list")
             .withDisplayName("Exclude list")
             .withType(Type.LIST)
             .withWidth(Width.LONG)
             .withImportance(Importance.MEDIUM)
-            .withDescription("Comma-separated list of collection names to exclude.");
+            .withDescription("A comma-separated list of regular expressions matching collection names whose change events "
+                    + "should be excluded. Entries may be literal names or Java regular expressions. "
+                    + "Cannot be used together with milvus.collection.include.list.");
 
     public static final Field METADATA_TIMEOUT_MS = Field.create("milvus.metadata.timeout.ms")
             .withDisplayName("Metadata timeout (ms)")

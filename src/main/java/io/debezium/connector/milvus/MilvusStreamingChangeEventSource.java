@@ -26,6 +26,7 @@ import io.debezium.pipeline.source.spi.ChangeEventSource;
 import io.debezium.pipeline.source.spi.StreamingChangeEventSource;
 import io.debezium.relational.TableId;
 import io.debezium.util.Clock;
+import io.debezium.util.DelayStrategy;
 import io.debezium.util.Strings;
 import io.milvus.grpc.DataType;
 
@@ -52,10 +53,6 @@ public class MilvusStreamingChangeEventSource
 
     /** Maximum number of attempts when resolving etcd checkpoint offsets for snapshot handoff. */
     private static final int CHECKPOINT_RESOLVE_MAX_ATTEMPTS = 3;
-    /** Initial backoff (ms) between checkpoint resolution retries; doubled each attempt. */
-    private static final long CHECKPOINT_RESOLVE_INITIAL_BACKOFF_MS = 500L;
-    /** Upper bound (ms) for the exponential backoff between checkpoint resolution retries. */
-    private static final long CHECKPOINT_RESOLVE_MAX_BACKOFF_MS = 5_000L;
 
     private final MilvusConnectorConfig connectorConfig;
     private final MilvusMessageConsumer messageConsumer;
@@ -397,7 +394,8 @@ public class MilvusStreamingChangeEventSource
             return null;
         }
 
-        long backoffMs = CHECKPOINT_RESOLVE_INITIAL_BACKOFF_MS;
+        DelayStrategy delay = DelayStrategy.exponential(
+                Duration.ofMillis(500), Duration.ofSeconds(5));
         Exception lastError = null;
 
         for (int attempt = 1; attempt <= CHECKPOINT_RESOLVE_MAX_ATTEMPTS; attempt++) {
@@ -416,12 +414,9 @@ public class MilvusStreamingChangeEventSource
             catch (Exception e) {
                 lastError = e;
                 if (attempt < CHECKPOINT_RESOLVE_MAX_ATTEMPTS) {
-                    LOGGER.warn("Failed to resolve checkpoint offsets for pchannel={} (attempt {}/{}): {}. "
-                            + "Retrying in {}ms.",
-                            pchannel, attempt, CHECKPOINT_RESOLVE_MAX_ATTEMPTS,
-                            e.getMessage(), backoffMs);
-                    Thread.sleep(backoffMs);
-                    backoffMs = Math.min(backoffMs * 2, CHECKPOINT_RESOLVE_MAX_BACKOFF_MS);
+                    LOGGER.warn("Failed to resolve checkpoint offsets for pchannel={} (attempt {}/{}): {}. Retrying.",
+                            pchannel, attempt, CHECKPOINT_RESOLVE_MAX_ATTEMPTS, e.getMessage());
+                    delay.sleepWhen(true);
                 }
             }
         }

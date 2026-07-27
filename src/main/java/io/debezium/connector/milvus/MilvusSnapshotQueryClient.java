@@ -7,6 +7,7 @@ package io.debezium.connector.milvus;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -46,27 +47,23 @@ public class MilvusSnapshotQueryClient implements AutoCloseable {
     /** Close timeout in milliseconds passed to {@link MilvusClientV2#close(long)}. */
     private static final long CLOSE_TIMEOUT_MS = 5_000L;
 
-    private final MilvusClientV2 client;
+    /**
+     * Configuration used to build the client lazily on first use.
+     * {@code null} when the client was injected via the test constructor.
+     */
+    private final MilvusConnectorConfig config;
+
+    private volatile MilvusClientV2 client;
 
     /**
-     * Production constructor — creates a live Milvus v2 client from connector config.
+     * Production constructor — stores the config; the actual {@link MilvusClientV2}
+     * connection is deferred until the first {@link #queryPage} call.  This avoids
+     * failing connector startup with a connectivity error at a point where
+     * {@code RetriableException} semantics are not yet active.
      */
     public MilvusSnapshotQueryClient(MilvusConnectorConfig config) {
-        ConnectConfig.ConnectConfigBuilder builder = ConnectConfig.builder()
-                .uri(config.getMilvusUri())
-                .connectTimeoutMs(config.getMetadataTimeoutMs());
-
-        if (config.getMilvusToken() != null && !config.getMilvusToken().isBlank()) {
-            builder.token(config.getMilvusToken());
-        }
-
-        try {
-            this.client = new MilvusClientV2(builder.build());
-        }
-        catch (Exception e) {
-            throw new DebeziumException(
-                    "Failed to create Milvus v2 snapshot query client for URI " + config.getMilvusUri(), e);
-        }
+        this.config = Objects.requireNonNull(config, "config must not be null");
+        this.client = null;
     }
 
     /**
@@ -74,7 +71,36 @@ public class MilvusSnapshotQueryClient implements AutoCloseable {
      * (or mocked) {@link MilvusClientV2} without a live Milvus endpoint.
      */
     MilvusSnapshotQueryClient(MilvusClientV2 client) {
-        this.client = client;
+        this.config = null;
+        this.client = Objects.requireNonNull(client, "client must not be null");
+    }
+
+    /**
+     * Returns the shared client, creating it on the first call when using the
+     * production constructor.
+     */
+    private MilvusClientV2 client() {
+        if (client == null) {
+            synchronized (this) {
+                if (client == null) {
+                    ConnectConfig.ConnectConfigBuilder builder = ConnectConfig.builder()
+                            .uri(config.getMilvusUri())
+                            .connectTimeoutMs(config.getMetadataTimeoutMs());
+                    if (config.getMilvusToken() != null && !config.getMilvusToken().isBlank()) {
+                        builder.token(config.getMilvusToken());
+                    }
+                    LOGGER.info("Lazily connecting Milvus v2 snapshot query client to {}", config.getMilvusUri());
+                    try {
+                        client = new MilvusClientV2(builder.build());
+                    }
+                    catch (Exception e) {
+                        throw new DebeziumException(
+                                "Failed to create Milvus v2 snapshot query client for URI " + config.getMilvusUri(), e);
+                    }
+                }
+            }
+        }
+        return client;
     }
 
     /**
@@ -112,7 +138,7 @@ public class MilvusSnapshotQueryClient implements AutoCloseable {
                 .build();
 
         try {
-            QueryResp resp = client.query(req);
+            QueryResp resp = client().query(req);
             List<QueryResp.QueryResult> results = resp.getQueryResults();
             if (results == null || results.isEmpty()) {
                 return List.of();

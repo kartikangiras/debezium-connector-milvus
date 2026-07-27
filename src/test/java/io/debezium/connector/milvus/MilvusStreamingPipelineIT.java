@@ -13,7 +13,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -328,24 +327,12 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
                 + "." + collectionName;
 
-        Awaitility.await("insert and delete records on topic " + expectedTopic)
-                .pollDelay(Duration.ofSeconds(1))
-                .pollInterval(Duration.ofMillis(500))
-                .atMost(Duration.ofSeconds(60))
-                .untilAsserted(() -> {
-                    List<SourceRecord> topicRecords = consumedLines.stream()
-                            .filter(r -> expectedTopic.equals(r.topic()))
-                            .collect(Collectors.toList());
-                    assertThat(topicRecords)
-                            .withFailMessage("Expected at least 2 records (insert+delete) on topic %s, got %d: %s",
-                                    expectedTopic, topicRecords.size(), topicRecords)
-                            .hasSizeGreaterThanOrEqualTo(2);
-                });
-
-        List<SourceRecord> topicRecords = consumedLines.stream()
-                .filter(r -> expectedTopic.equals(r.topic()))
-                .collect(Collectors.toList());
-        assertThat(topicRecords).hasSizeGreaterThanOrEqualTo(2);
+        // Consume exactly the insert and the delete; consumeRecordsByTopic blocks
+        // until both records arrive and gives us the standard topic-filtered view.
+        var records = consumeRecordsByTopic(2);
+        List<SourceRecord> topicRecords = records.recordsForTopic(expectedTopic);
+        assertThat(topicRecords).as("Expected insert + delete on topic " + expectedTopic)
+                .hasSize(2);
 
         SourceRecord insertRecord = topicRecords.get(0);
         Struct insertValue = (Struct) insertRecord.value();
@@ -416,15 +403,4 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         assertThat(embedding).containsExactly(1.5f, 2.5f, 3.5f, 4.5f);
     }
 
-    /**
-     * Filter the accumulated records down to those belonging to the given topic,
-     * preserving arrival order. This replaces the now-inaccessible
-     * {@code AbstractConnectorTest.SourceRecords#recordsForTopic(String)} helper
-     * (whose constructor is not visible from this connector package).
-     */
-    private static List<SourceRecord> recordsForTopic(List<SourceRecord> records, String topicName) {
-        return records.stream()
-                .filter(r -> topicName.equals(r.topic()))
-                .collect(Collectors.toList());
-    }
 }
