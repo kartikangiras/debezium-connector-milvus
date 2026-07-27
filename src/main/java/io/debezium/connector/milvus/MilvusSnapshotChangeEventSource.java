@@ -126,12 +126,12 @@ public class MilvusSnapshotChangeEventSource
 
         String dbName = connectorConfig.getMilvusDatabase();
         List<CollectionMetadata> collections = metadataClient.collections();
-        List<String> includeList = connectorConfig.getCollectionIncludeList();
-        List<String> excludeList = connectorConfig.getCollectionExcludeList();
+        Set<Pattern> includePatterns = toPatterns(connectorConfig.getCollectionIncludeList());
+        Set<Pattern> excludePatterns = toPatterns(connectorConfig.getCollectionExcludeList());
         List<TableId> snapshottedTables = new ArrayList<>();
         for (CollectionMetadata collectionMeta : collections) {
             String collectionName = collectionMeta.getName();
-            if (isIncluded(collectionName, includeList, excludeList)) {
+            if (isIncluded(collectionName, includePatterns, excludePatterns)) {
                 snapshottedTables.add(new TableId(null, dbName, collectionName));
             }
         }
@@ -147,7 +147,7 @@ public class MilvusSnapshotChangeEventSource
             }
 
             String collectionName = collectionMeta.getName();
-            if (!isIncluded(collectionName, includeList, excludeList)) {
+            if (!isIncluded(collectionName, includePatterns, excludePatterns)) {
                 LOGGER.debug("Skipping collection {} (filtered by include/exclude list)", collectionName);
                 continue;
             }
@@ -344,12 +344,23 @@ public class MilvusSnapshotChangeEventSource
     }
 
     /**
-     * Determine whether a collection should be included in the snapshot.
+     * Compile a raw include/exclude list into regex patterns, once per snapshot run,
+     * so {@link #isIncluded} can be evaluated cheaply for every collection.
      *
-     * <p>Both the include and exclude lists support literal collection names as well
-     * as regular expressions compiled via {@link Strings#setOfRegex(String)}, matching
-     * the behaviour of other Debezium connectors.  For example, {@code "orders.*"} matches
-     * every collection whose name begins with {@code orders}.</p>
+     * <p>Both lists support literal collection names as well as regular expressions
+     * compiled via {@link Strings#setOfRegex(String)}, matching the behaviour of other
+     * Debezium connectors. For example, {@code "orders.*"} matches every collection
+     * whose name begins with {@code orders}.</p>
+     */
+    private static Set<Pattern> toPatterns(List<String> rawList) {
+        if (rawList == null || rawList.isEmpty()) {
+            return Set.of();
+        }
+        return Strings.setOfRegex(String.join(",", rawList));
+    }
+
+    /**
+     * Determine whether a collection should be included in the snapshot.
      *
      * <p>Evaluation order:
      * <ol>
@@ -361,16 +372,12 @@ public class MilvusSnapshotChangeEventSource
      * </ol></p>
      */
     private static boolean isIncluded(String collectionName,
-                                      List<String> includeList,
-                                      List<String> excludeList) {
-        if (excludeList != null && !excludeList.isEmpty()) {
-            Set<Pattern> excludePatterns = Strings.setOfRegex(String.join(",", excludeList));
-            if (excludePatterns.stream().anyMatch(p -> p.matcher(collectionName).matches())) {
-                return false;
-            }
+                                      Set<Pattern> includePatterns,
+                                      Set<Pattern> excludePatterns) {
+        if (!excludePatterns.isEmpty() && excludePatterns.stream().anyMatch(p -> p.matcher(collectionName).matches())) {
+            return false;
         }
-        if (includeList != null && !includeList.isEmpty()) {
-            Set<Pattern> includePatterns = Strings.setOfRegex(String.join(",", includeList));
+        if (!includePatterns.isEmpty()) {
             return includePatterns.stream().anyMatch(p -> p.matcher(collectionName).matches());
         }
         return true;
