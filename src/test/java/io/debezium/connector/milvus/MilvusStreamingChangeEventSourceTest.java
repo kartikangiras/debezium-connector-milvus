@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,6 +25,7 @@ import java.util.Set;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import io.debezium.DebeziumException;
 import io.debezium.config.Configuration;
@@ -93,6 +95,29 @@ public class MilvusStreamingChangeEventSourceTest {
         source.execute(context, partition, offsetContext);
 
         verify(messageConsumer, never()).poll(any(Duration.class));
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2282")
+    void shouldMarkPositionResolvedAfterSeekAndClearOnStop() throws Exception {
+        when(checkpointReader.read(anyString())).thenReturn(Optional.empty());
+        when(context.isRunning()).thenReturn(true, false);
+        when(messageConsumer.poll(any(Duration.class))).thenReturn(List.of());
+
+        source.execute(context, partition, offsetContext);
+
+        InOrder inOrder = inOrder(messageConsumer, streamingMetrics);
+        inOrder.verify(messageConsumer).assignAndSeek(any(), any(), any());
+        inOrder.verify(streamingMetrics).positionResolved(true);
+        inOrder.verify(streamingMetrics).positionResolved(false);
+    }
+
+    @Test
+    @FixFor("debezium/dbz#2282")
+    void shouldClearPositionResolvedOnClose() {
+        source.close();
+
+        verify(streamingMetrics).positionResolved(false);
     }
 
     @Test

@@ -103,6 +103,7 @@ public class MilvusStreamingChangeEventSource
         preWarmEngine(offsetContext);
 
         seekConsumer(pchannel, tp, offsetContext);
+        streamingMetrics.positionResolved(true);
 
         streamingMetrics.connected(true);
 
@@ -190,11 +191,13 @@ public class MilvusStreamingChangeEventSource
                 orderingEngine.getLateMessagesDropped(),
                 orderingEngine.getGlobalWatermark());
         streamingMetrics.connected(false);
+        streamingMetrics.positionResolved(false);
     }
 
     @Override
     public void close() {
         streamingMetrics.connected(false);
+        streamingMetrics.positionResolved(false);
         if (messageConsumer != null) {
             messageConsumer.close();
         }
@@ -296,10 +299,7 @@ public class MilvusStreamingChangeEventSource
         if (dispatched > 0) {
             LOGGER.info("Dispatched {} events (watermark={})",
                     dispatched, orderingEngine.getGlobalWatermark());
-            Map<String, String> position = Map.of(
-                    "pchannel", partition.getPchannel(),
-                    "watermark", String.valueOf(orderingEngine.getGlobalWatermark()));
-            streamingMetrics.updateSourceEventPosition(position);
+            streamingMetrics.updateSourceEventPosition(partition.getPchannel(), orderingEngine.getGlobalWatermark());
         }
     }
 
