@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import javax.management.InstanceNotFoundException;
+
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -34,6 +36,7 @@ import io.debezium.connector.milvus.util.TestHelper;
 import io.debezium.data.Json;
 import io.debezium.data.vector.FloatVector;
 import io.debezium.embedded.async.AbstractAsyncEngineConnectorTest;
+import io.debezium.embedded.util.MetricsHelper;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
@@ -84,8 +87,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
                         if (milvusClient == null) {
                             milvusClient = TestHelper.createMilvusClient();
                         }
-                        // createCollection exercises the full Milvus→Kafka path,
-                        // so we use it as the true readiness probe.
                         String sentinel = "_dbz_ready_probe_";
                         CreateCollectionReq.FieldSchema idField = CreateCollectionReq.FieldSchema.builder()
                                 .name("id").dataType(DataType.Int64)
@@ -142,6 +143,27 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         }
         catch (Exception ignored) {
         }
+    }
+
+    /**
+     * Wait until the streaming source's Kafka consumer has resolved and
+     * assigned its starting position (e.g. seeked to LATEST).
+     *
+     * <p>Guards on the {@code PositionResolved} JMX attribute exposed by
+     * {@link MilvusStreamingChangeEventSourceMetrics} rather than a fixed
+     * sleep, so the test isn't brittle under slow CI environments: a DML
+     * issued before the consumer's position is resolved could be missed
+     * entirely (if seeking to LATEST lands after the write) rather than
+     * merely delayed.</p>
+     */
+    private void waitForConsumerPositionResolved() {
+        Awaitility.await("consumer position resolved")
+                .pollInterval(Duration.ofMillis(100))
+                .atMost(Duration.ofSeconds(30))
+                .ignoreException(InstanceNotFoundException.class)
+                .until(() -> Boolean.TRUE.equals(
+                        MetricsHelper.<Boolean> getStreamingMetric(
+                                "milvus", TestHelper.TOPIC_PREFIX, "streaming", "PositionResolved")));
     }
 
     private Configuration connectorConfig() {
@@ -306,11 +328,7 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         createSimpleCollection(collectionName);
         start(MilvusConnector.class, connectorConfig());
         waitForStreamingRunning("milvus", TestHelper.TOPIC_PREFIX);
-
-        Awaitility.await("consumer LATEST resolved")
-                .pollDelay(Duration.ofSeconds(2))
-                .atMost(Duration.ofSeconds(10))
-                .until(() -> true);
+        waitForConsumerPositionResolved();
 
         long entityId = System.nanoTime();
 
