@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.kafka.common.config.ConfigDef;
 import org.junit.jupiter.api.Test;
 
 import io.debezium.config.Configuration;
@@ -90,7 +91,7 @@ public class MilvusConnectorConfigTest {
     @FixFor("debezium/dbz#2028")
     void shouldExposeConfigDef() {
         assertThatNoException().isThrownBy(() -> {
-            org.apache.kafka.common.config.ConfigDef configDef = MilvusConnectorConfig.configDef();
+            ConfigDef configDef = MilvusConnectorConfig.configDef();
             assertThat(configDef).isNotNull();
             assertThat(configDef.names()).contains("milvus.uri", "topic.prefix", "milvus.database", "milvus.etcd.checkpoint.path");
         });

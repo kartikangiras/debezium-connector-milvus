@@ -84,17 +84,17 @@ public class MilvusProtoDeserializerTest {
         assertThat(first.getRow().getFieldNames()).containsExactly("id", "title", "embedding");
         assertThat(rowGet(first, "id")).isEqualTo(1L);
         assertThat(rowGet(first, "title")).isEqualTo("Dune");
-        assertThat(rowGet(first, "embedding")).isInstanceOf(java.util.List.class);
+        assertThat(rowGet(first, "embedding")).isInstanceOf(List.class);
         @SuppressWarnings("unchecked")
-        java.util.List<Float> firstEmbedding = (java.util.List<Float>) rowGet(first, "embedding");
+        List<Float> firstEmbedding = (List<Float>) rowGet(first, "embedding");
         assertThat(firstEmbedding).containsExactly(1.0f, 2.0f);
 
         MilvusChangeEvent.Insert second = (MilvusChangeEvent.Insert) events.get(1);
         assertThat(rowGet(second, "id")).isEqualTo(2L);
         assertThat(rowGet(second, "title")).isEqualTo("Hyperion");
-        assertThat(rowGet(second, "embedding")).isInstanceOf(java.util.List.class);
+        assertThat(rowGet(second, "embedding")).isInstanceOf(List.class);
         @SuppressWarnings("unchecked")
-        java.util.List<Float> secondEmbedding = (java.util.List<Float>) rowGet(second, "embedding");
+        List<Float> secondEmbedding = (List<Float>) rowGet(second, "embedding");
         assertThat(secondEmbedding).containsExactly(3.0f, 4.0f);
     }
 

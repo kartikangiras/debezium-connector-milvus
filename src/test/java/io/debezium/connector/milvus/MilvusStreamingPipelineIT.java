@@ -345,8 +345,6 @@ class MilvusStreamingPipelineIT extends AbstractAsyncEngineConnectorTest {
         String expectedTopic = TestHelper.TOPIC_PREFIX + "." + MilvusConnectorConfig.MILVUS_DATABASE.defaultValueAsString()
                 + "." + collectionName;
 
-        // Consume exactly the insert and the delete; consumeRecordsByTopic blocks
-        // until both records arrive and gives us the standard topic-filtered view.
         var records = consumeRecordsByTopic(2);
         List<SourceRecord> topicRecords = records.recordsForTopic(expectedTopic);
         assertThat(topicRecords).as("Expected insert + delete on topic " + expectedTopic)

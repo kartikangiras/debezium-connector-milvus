@@ -6,6 +6,7 @@
 package io.debezium.connector.milvus.util;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -77,7 +78,7 @@ public final class TestHelper {
         try (AdminClient admin = AdminClient.create(adminProps)) {
             Set<String> existing = admin.listTopics().names().get(60, TimeUnit.SECONDS);
             if (!existing.contains(topic)) {
-                admin.createTopics(java.util.List.of(new NewTopic(topic, partitions, replication)))
+                admin.createTopics(List.of(new NewTopic(topic, partitions, replication)))
                         .all().get(60, TimeUnit.SECONDS);
             }
         }
@@ -107,7 +108,7 @@ public final class TestHelper {
                 .build();
         client.createIndex(CreateIndexReq.builder()
                 .collectionName(collectionName)
-                .indexParams(java.util.List.of(indexParam))
+                .indexParams(List.of(indexParam))
                 .build());
         client.loadCollection(LoadCollectionReq.builder()
                 .collectionName(collectionName)
