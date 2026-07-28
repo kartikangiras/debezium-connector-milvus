@@ -34,7 +34,8 @@ import io.debezium.pipeline.source.spi.EventMetadataProvider;
  */
 @ThreadSafe
 public class MilvusSnapshotChangeEventSourceMetrics
-        extends DefaultSnapshotChangeEventSourceMetrics<MilvusPartition> {
+        extends DefaultSnapshotChangeEventSourceMetrics<MilvusPartition>
+        implements MilvusSnapshotChangeEventSourceMetricsMXBean {
 
     /**
      * The etcd checkpoint TSO used as {@code guarantee_ts} for the snapshot.
@@ -73,6 +74,7 @@ public class MilvusSnapshotChangeEventSourceMetrics
      *
      * @return the guarantee TSO, or 0 if no checkpoint was available
      */
+    @Override
     public long getGuaranteeTso() {
         return guaranteeTso.get();
     }
@@ -100,6 +102,7 @@ public class MilvusSnapshotChangeEventSourceMetrics
      *
      * @return snapshot start time in milliseconds since epoch, or 0
      */
+    @Override
     public long getSnapshotStartTs() {
         return snapshotStartTimeMs.get();
     }
