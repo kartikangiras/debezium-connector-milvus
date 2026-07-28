@@ -126,7 +126,6 @@ public class MilvusConnectorTask extends BaseSourceTask<MilvusPartition, MilvusO
 
         MilvusStreamingChangeEventSourceMetrics streamingMetrics = new MilvusStreamingChangeEventSourceMetrics(
                 taskContext, queue, metadataProvider, schema::dataCollectionIds);
-        MilvusChangeEventSourceMetricsFactory metricsFactory = new MilvusChangeEventSourceMetricsFactory(streamingMetrics);
 
         MilvusChangeEventSourceFactory factory = new MilvusChangeEventSourceFactory(
                 connectorConfig, dispatcher, schema, checkpointReader, snapshotQueryClient, metadataClient,
