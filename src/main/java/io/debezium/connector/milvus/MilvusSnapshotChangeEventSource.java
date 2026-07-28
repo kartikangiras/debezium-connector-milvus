@@ -73,7 +73,7 @@ public class MilvusSnapshotChangeEventSource
     private final MilvusMetadataClient metadataClient;
     private final EventDispatcher<MilvusPartition, TableId> dispatcher;
     private final MilvusDatabaseSchema databaseSchema;
-    private final SnapshotProgressListener<MilvusPartition> snapshotProgressListener;
+    private final MilvusSnapshotChangeEventSourceMetrics snapshotMetrics;
 
     public MilvusSnapshotChangeEventSource(MilvusConnectorConfig connectorConfig,
                                            SnapshotProgressListener<MilvusPartition> snapshotProgressListener,
@@ -90,7 +90,7 @@ public class MilvusSnapshotChangeEventSource
         this.metadataClient = metadataClient;
         this.dispatcher = dispatcher;
         this.databaseSchema = databaseSchema;
-        this.snapshotProgressListener = snapshotProgressListener;
+        this.snapshotMetrics = (MilvusSnapshotChangeEventSourceMetrics) snapshotProgressListener;
     }
 
     @Override
@@ -123,6 +123,7 @@ public class MilvusSnapshotChangeEventSource
             LOGGER.warn("No etcd checkpoint found for pchannel={}.  Snapshotting with guaranteeTs=0 "
                     + "and streaming will resume from LATEST.", pchannel);
         }
+        snapshotMetrics.setGuaranteeTso(guaranteeTs);
 
         String dbName = connectorConfig.getMilvusDatabase();
         List<CollectionMetadata> collections = metadataClient.collections();
@@ -135,7 +136,7 @@ public class MilvusSnapshotChangeEventSource
                 snapshottedTables.add(new TableId(null, dbName, collectionName));
             }
         }
-        snapshotProgressListener.monitoredDataCollectionsDetermined(snapshotContext.partition, snapshottedTables);
+        snapshotMetrics.monitoredDataCollectionsDetermined(snapshotContext.partition, snapshottedTables);
 
         int collectionCount = 0;
         long totalRows = 0;
@@ -165,7 +166,7 @@ public class MilvusSnapshotChangeEventSource
             totalRows += rows;
             collectionCount++;
 
-            snapshotProgressListener.dataCollectionSnapshotCompleted(snapshotContext.partition, tableId, rows);
+            snapshotMetrics.dataCollectionSnapshotCompleted(snapshotContext.partition, tableId, rows);
             notificationService.initialSnapshotNotificationService()
                     .notifyCompletedTableSuccessfully(snapshotContext.partition, offsetContext, collectionName);
 
@@ -265,7 +266,7 @@ public class MilvusSnapshotChangeEventSource
                 rowsEmitted++;
             }
 
-            snapshotProgressListener.rowsScanned(partition, tableId, rowsEmitted);
+            snapshotMetrics.rowsScanned(partition, tableId, rowsEmitted);
 
             if (page.size() < batchSize) {
                 break;
@@ -420,19 +421,6 @@ public class MilvusSnapshotChangeEventSource
                                                         SnapshotConfiguration snapshotConfiguration) {
         return new SnapshottingTask(false, false,
                 List.of(), Map.of(), false);
-    }
-
-    /**
-     * Surface the guarantee TSO on the snapshot metrics MBean when the
-     * runtime type of {@link #snapshotProgressListener} is a
-     * {@link MilvusSnapshotChangeEventSourceMetrics}. No-op otherwise.
-     *
-     * @param tso the guarantee TSO, or 0 if no checkpoint was available
-     */
-    private void setGuaranteeTsoOnMetrics(long tso) {
-        if (snapshotProgressListener instanceof MilvusSnapshotChangeEventSourceMetrics metrics) {
-            metrics.setGuaranteeTso(tso);
-        }
     }
 
     /**

@@ -42,7 +42,6 @@ import io.debezium.pipeline.notification.InitialSnapshotNotificationService;
 import io.debezium.pipeline.notification.NotificationService;
 import io.debezium.pipeline.source.SnapshottingTask;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
-import io.debezium.pipeline.source.spi.SnapshotProgressListener;
 import io.debezium.pipeline.spi.SnapshotResult;
 import io.debezium.relational.TableId;
 
@@ -71,9 +70,8 @@ public class MilvusSnapshotChangeEventSourceTest {
     @Mock
     private MilvusDatabaseSchema databaseSchema;
 
-    @SuppressWarnings("unchecked")
     @Mock
-    private SnapshotProgressListener<MilvusPartition> progressListener;
+    private MilvusSnapshotChangeEventSourceMetrics progressListener;
 
     @SuppressWarnings("unchecked")
     @Mock
@@ -125,6 +123,7 @@ public class MilvusSnapshotChangeEventSourceTest {
         assertThat(result.getStatus()).isEqualTo(SnapshotResult.SnapshotResultStatus.COMPLETED);
         assertThat(result.getOffset().isSnapshotCompleted()).isTrue();
         verify(dispatcher, never()).dispatchDataChangeEvent(any(), any(), any());
+        verify(progressListener).setGuaranteeTso(0L);
     }
 
     @Test
@@ -139,6 +138,7 @@ public class MilvusSnapshotChangeEventSourceTest {
         MilvusOffsetContext ctx = result.getOffset();
         assertThat(ctx.getMqOffset(PCHANNEL)).isEqualTo(KAFKA_OFFSET);
         assertThat(ctx.getCheckpointTimestamp()).isEqualTo(GUARANTEE_TS);
+        verify(progressListener).setGuaranteeTso(GUARANTEE_TS);
     }
 
     @Test
