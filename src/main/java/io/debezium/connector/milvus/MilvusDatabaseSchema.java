@@ -19,6 +19,9 @@ import org.slf4j.LoggerFactory;
 
 import io.debezium.config.CommonConnectorConfig;
 import io.debezium.connector.common.CdcSourceTaskContext;
+import io.debezium.connector.milvus.metadata.CollectionNotFoundException;
+import io.debezium.connector.milvus.metadata.MilvusCollectionSchema;
+import io.debezium.connector.milvus.metadata.MilvusMetadataClient;
 import io.debezium.relational.Column;
 import io.debezium.relational.ColumnEditor;
 import io.debezium.relational.CustomConverterRegistry;
@@ -51,7 +54,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
     private final Set<TableId> registeredTableIds = new HashSet<>();
     private final Map<TableId, String[]> registeredColumnNames = new HashMap<>();
     private final Map<TableId, String> registeredPkFields = new HashMap<>();
-    private final io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient;
+    private final MilvusMetadataClient metadataClient;
 
     public MilvusDatabaseSchema(RelationalDatabaseConnectorConfig config,
                                 TopicNamingStrategy<TableId> topicNamingStrategy,
@@ -73,7 +76,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                                 boolean tableIdCaseInsensitive,
                                 Key.KeyMapper keyMapper,
                                 CdcSourceTaskContext<?> context,
-                                io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient) {
+                                MilvusMetadataClient metadataClient) {
         super(config, topicNamingStrategy, tableFilter, columnFilter,
                 tableSchemaBuilder, tableIdCaseInsensitive, keyMapper, context);
         this.metadataClient = metadataClient;
@@ -86,7 +89,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
 
     public static MilvusDatabaseSchema create(MilvusConnectorConfig connectorConfig,
                                               CdcSourceTaskContext<?> taskContext,
-                                              io.debezium.connector.milvus.metadata.MilvusMetadataClient metadataClient) {
+                                              MilvusMetadataClient metadataClient) {
         TopicNamingStrategy<TableId> topicNamingStrategy = connectorConfig
                 .getTopicNamingStrategy(CommonConnectorConfig.TOPIC_NAMING_STRATEGY);
         Tables.TableFilter tableFilter = Tables.TableFilter.includeAll();
@@ -212,7 +215,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                                           Map<String, DataType> fieldTypes) {
         if (metadataClient != null) {
             try {
-                io.debezium.connector.milvus.metadata.MilvusCollectionSchema schema = metadataClient.schema(collectionName);
+                MilvusCollectionSchema schema = metadataClient.schema(collectionName);
                 String pk = schema.getPrimaryKeyField();
                 if (pk != null && !pk.isBlank() && fieldNames.contains(pk)) {
                     return pk;
@@ -303,9 +306,9 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
             return false;
         }
         try {
-            io.debezium.connector.milvus.metadata.MilvusCollectionSchema schema = metadataClient.schema(collectionName);
+            MilvusCollectionSchema schema = metadataClient.schema(collectionName);
             List<FieldDefinition> fields = new ArrayList<>();
-            for (io.debezium.connector.milvus.metadata.MilvusCollectionSchema.FieldSchema f : schema.getFields()) {
+            for (MilvusCollectionSchema.FieldSchema f : schema.getFields()) {
                 io.milvus.grpc.DataType dt = io.milvus.grpc.DataType.forNumber(f.getDataType());
                 if (dt == null) {
                     dt = io.milvus.grpc.DataType.None;
@@ -320,7 +323,7 @@ public class MilvusDatabaseSchema extends RelationalDatabaseSchema {
                     collectionName);
             return registerCollection(dbName, collectionName, fields);
         }
-        catch (io.debezium.connector.milvus.metadata.CollectionNotFoundException e) {
+        catch (CollectionNotFoundException e) {
             LOGGER.warn("Collection {} not found in Milvus metadata; cannot register schema", collectionName);
             return false;
         }
