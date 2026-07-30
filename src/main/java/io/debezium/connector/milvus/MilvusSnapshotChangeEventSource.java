@@ -287,17 +287,16 @@ public class MilvusSnapshotChangeEventSource
     private MilvusRow toMilvusRow(Map<String, Object> rowMap,
                                   String[] columnNames,
                                   Map<String, DataType> typeByName) {
-        String[] fieldNames = columnNames;
-        Object[] fieldValues = new Object[fieldNames.length];
-        DataType[] fieldTypes = new DataType[fieldNames.length];
+        Object[] fieldValues = new Object[columnNames.length];
+        DataType[] fieldTypes = new DataType[columnNames.length];
 
-        for (int i = 0; i < fieldNames.length; i++) {
-            fieldValues[i] = rowMap.get(fieldNames[i]);
-            DataType dt = typeByName.getOrDefault(fieldNames[i], DataType.None);
+        for (int i = 0; i < columnNames.length; i++) {
+            fieldValues[i] = rowMap.get(columnNames[i]);
+            DataType dt = typeByName.getOrDefault(columnNames[i], DataType.None);
             fieldTypes[i] = dt != null ? dt : DataType.None;
         }
 
-        return new MilvusRow(fieldNames, fieldValues, fieldTypes);
+        return new MilvusRow(columnNames, fieldValues, fieldTypes);
     }
 
     /**
