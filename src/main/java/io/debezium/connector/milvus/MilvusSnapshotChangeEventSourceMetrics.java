@@ -12,6 +12,7 @@ import io.debezium.connector.base.ChangeEventQueueMetrics;
 import io.debezium.connector.common.CdcSourceTaskContext;
 import io.debezium.pipeline.metrics.DefaultSnapshotChangeEventSourceMetrics;
 import io.debezium.pipeline.source.spi.EventMetadataProvider;
+import io.debezium.util.Clock;
 
 /**
  * Milvus-specific snapshot change event source metrics.
@@ -60,7 +61,7 @@ public class MilvusSnapshotChangeEventSourceMetrics
     @Override
     public void snapshotStarted(MilvusPartition partition) {
         super.snapshotStarted(partition);
-        snapshotStartTimeMs.set(System.currentTimeMillis());
+        snapshotStartTimeMs.set(Clock.SYSTEM.currentTimeInMillis());
     }
 
     /**
@@ -95,10 +96,6 @@ public class MilvusSnapshotChangeEventSourceMetrics
      * Returns the system clock timestamp (ms since epoch) when the snapshot
      * phase started. Returns 0 if the snapshot has not yet started or has
      * been reset.
-     *
-     * <p>This metric is listed in DDD-42 Section 12.1 but is not exposed by
-     * the standard Debezium {@code SnapshotMeter}. Exposed here as a
-     * Milvus-specific JMX attribute.</p>
      *
      * @return snapshot start time in milliseconds since epoch, or 0
      */

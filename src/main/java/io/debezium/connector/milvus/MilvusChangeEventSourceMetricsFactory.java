@@ -59,17 +59,4 @@ public class MilvusChangeEventSourceMetricsFactory
                                                                                                                    CapturedTablesSupplier capturedTablesSupplier) {
         return streamingMetrics;
     }
-
-    /**
-     * The Milvus connector manages its own connection lifecycle
-     * (the Kafka consumer inside {@link MilvusStreamingChangeEventSource}),
-     * so the coordinator should not attempt to manage the {@code Connected}
-     * metric.
-     *
-     * @return {@code false}
-     */
-    @Override
-    public boolean connectionMetricHandledByCoordinator() {
-        return false;
-    }
 }
