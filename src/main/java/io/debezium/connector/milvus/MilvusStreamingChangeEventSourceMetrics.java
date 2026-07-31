@@ -16,6 +16,7 @@ import io.debezium.connector.common.CdcSourceTaskContext;
 import io.debezium.pipeline.metrics.CapturedTablesSupplier;
 import io.debezium.pipeline.metrics.DefaultStreamingChangeEventSourceMetrics;
 import io.debezium.pipeline.source.spi.EventMetadataProvider;
+import io.debezium.util.Clock;
 
 /**
  * Milvus-specific streaming change event source metrics.
@@ -118,7 +119,7 @@ public class MilvusStreamingChangeEventSourceMetrics
             return 0;
         }
         long watermarkPhysicalMs = watermark >> TSO_PHYSICAL_SHIFT;
-        long lag = System.currentTimeMillis() - watermarkPhysicalMs;
+        long lag = Clock.SYSTEM.currentTimeInMillis() - watermarkPhysicalMs;
         return Math.max(0, lag);
     }
 

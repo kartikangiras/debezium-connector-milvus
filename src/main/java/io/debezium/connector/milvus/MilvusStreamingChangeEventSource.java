@@ -105,8 +105,6 @@ public class MilvusStreamingChangeEventSource
         seekConsumer(pchannel, tp, offsetContext);
         streamingMetrics.positionResolved(true);
 
-        streamingMetrics.connected(true);
-
         boolean bufferFull = false;
 
         while (context.isRunning()) {
@@ -125,8 +123,7 @@ public class MilvusStreamingChangeEventSource
 
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
-                    dispatchFlushedEvents(flushed, partition, offsetContext);
-                    streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
+                    dispatchAndUpdateWatermark(flushed, partition, offsetContext);
                 }
 
                 if (orderingEngine.isStalled()) {
@@ -139,8 +136,7 @@ public class MilvusStreamingChangeEventSource
 
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
-                        dispatchFlushedEvents(forceFlushed, partition, offsetContext);
-                        streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
+                        dispatchAndUpdateWatermark(forceFlushed, partition, offsetContext);
                     }
                 }
 
@@ -154,15 +150,13 @@ public class MilvusStreamingChangeEventSource
 
                 List<MilvusChangeEvent> flushed = orderingEngine.flush();
                 if (!flushed.isEmpty()) {
-                    dispatchFlushedEvents(flushed, partition, offsetContext);
-                    streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
+                    dispatchAndUpdateWatermark(flushed, partition, offsetContext);
                     bufferFull = false;
                 }
                 else if (orderingEngine.isStalled()) {
                     List<MilvusChangeEvent> forceFlushed = orderingEngine.forceFlush();
                     if (!forceFlushed.isEmpty()) {
-                        dispatchFlushedEvents(forceFlushed, partition, offsetContext);
-                        streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
+                        dispatchAndUpdateWatermark(forceFlushed, partition, offsetContext);
                     }
                     bufferFull = false;
                 }
@@ -190,13 +184,11 @@ public class MilvusStreamingChangeEventSource
                 orderingEngine.getForceFlushCount(),
                 orderingEngine.getLateMessagesDropped(),
                 orderingEngine.getGlobalWatermark());
-        streamingMetrics.connected(false);
         streamingMetrics.positionResolved(false);
     }
 
     @Override
     public void close() {
-        streamingMetrics.connected(false);
         streamingMetrics.positionResolved(false);
         if (messageConsumer != null) {
             messageConsumer.close();
@@ -225,6 +217,20 @@ public class MilvusStreamingChangeEventSource
                 }
             }
         }
+    }
+
+    /**
+     * Dispatch a batch of flushed events and update the global watermark metric
+     * in one step. These two operations must always happen together, so every
+     * flush/force-flush call site in {@link #execute} routes through here rather
+     * than duplicating the pairing.
+     */
+    private void dispatchAndUpdateWatermark(List<MilvusChangeEvent> events,
+                                            MilvusPartition partition,
+                                            MilvusOffsetContext offsetContext)
+            throws InterruptedException {
+        dispatchFlushedEvents(events, partition, offsetContext);
+        streamingMetrics.updateGlobalWatermark(orderingEngine.getGlobalWatermark());
     }
 
     /**
